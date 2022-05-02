@@ -1,0 +1,83 @@
+* ivy-ag
+
+A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher) with [[https://github.com/abo-abo/swiper][ivy]] interface. The package provides functionality like ~counsel-ag~ but allows to traverse upwards search directory and some extra switches.
+
+** Requirements:
++ [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher)
++ [[https://github.com/abo-abo/swiper][ivy]]
++ emacs >= 26.1
+
+** Installation
+
+*** With straight-use-package
+
+#+begin_src elisp
+(use-package ivy-ag
+  :init (setq ivy-ag-switchable-directories (list user-emacs-directory org-directory))
+  :straight (ivy-ag
+             :type git
+             :host github
+             :repo "KarimAziev/ivy-ag")
+  :bind (("C-c C-s" . ivy-ag)
+         ("C-c M-s" . ivy-ag-default-dir)
+         (:map ivy-ag-map
+               ("C-l" . ivy-ag-up)
+               ("M-." . ivy-ag-toggle-vcs-ignores)
+               ("C->" . ivy-ag-switch-next-dir)
+               ("C-<" . ivy-ag-switch-prev-dir)
+               ("C-c o" . ivy-ag-open-in-other-window)
+               ("C-." . ivy-ag-cd))))
+#+end_src
+
+*** Manually
+
+Or download the repository and add it to your ~load-path~.
+
+#+begin_src elisp
+
+(add-to-list 'load-path "/path/to/ivy-ag/")
+
+(require 'ivy-ag)
+
+;; example keymap setup
+(define-key global-map (kbd "C-c C-s") 'ivy-ag)
+(define-key global-map (kbd "C-c M-s") 'ivy-ag-default-dir)
+
+(define-key ivy-ag-map (kbd "C-l") 'ivy-ag-up)
+(define-key ivy-ag-map (kbd "M-.") 'ivy-ag-toggle-vcs-ignores)
+(define-key ivy-ag-map (kbd "C->") 'ivy-ag-switch-next-dir)
+(define-key ivy-ag-map (kbd "C-<") 'ivy-ag-switch-prev-dir)
+(define-key ivy-ag-map (kbd "C-.") 'ivy-ag-cd)
+#+end_src
+
+** Usage
+
+There are two main commands: ~ivy-ag~ and ~ivy-ag-default-dir~.
+
+The first one performs a search starting at the current project's root and ~ivy-ag-default-dir~ - at the current directory.
+
+During executing ~ivy-ag~ and ~ivy-ag-default-dir~, such commands are available in the minibuffer:
+
+| Default Key | Command                     | Description                                 |
+|-------------+-----------------------------+---------------------------------------------|
+| C-l         | ivy-ag-up                   | Traverse upward current directory           |
+| M-.         | ivy-ag-toggle-vcs-ignores   | Toggle vcs ignores                          |
+| C-c C-o     | ivy-ag-open-in-other-window | Jump to search result in other window       |
+| C->         | ivy-ag-switch-next-dir      | Cycle through ivy-ag-switchable-directories |
+| C-<         | ivy-ag-switch-prev-dir      | Cycle through ivy-ag-switchable-directories |
+| C-.         | ivy-ag-cd                   | Change current search directory             |
+
+
+To change keybindings, modify the variable ~ivy-ag-map~, e.g.:
+
+#+begin_src emacs-lisp
+(define-key ivy-ag-map (kbd "C-<backspace>") 'ivy-ag-up)
+#+end_src
+
+** Customization
+
++ ~ivy-ag-switchable-directories~
+List of directories for switching with ~ivy-ag-switch-next-dir~ and ~ivy-ag-switch-prev-dir~.
+
++ ~ivy-ag-initial-input-chars~
+Chars in the same format as for ~skip-chars-forward~. They are used to determine initial input.
