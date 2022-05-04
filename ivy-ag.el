@@ -265,7 +265,7 @@ They are used to determine word at point for initial input."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-<backspace>") #'ivy-ag-up)
     (define-key map (kbd "C-l") #'ivy-ag-up)
-    (define-key map (kbd "C-j") #'ivy-call-and-recenter)
+    (define-key map (kbd "C-j") #'ivy-call)
     (define-key map (kbd "M-q") #'counsel-git-grep-query-replace)
     (define-key map (kbd "C->") #'ivy-ag-switch-next-dir)
     (define-key map (kbd "C-<")  #'ivy-ag-switch-prev-dir)
