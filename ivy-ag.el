@@ -274,6 +274,28 @@ They are used to determine word at point for initial input."
     (define-key map (kbd "C-.") #'ivy-ag-cd)
     map))
 
+(defun ivy-ag-grep-action (x)
+  "Go to occurrence X in current Git repository."
+  (when (string-match "\\`\\(.*?\\):\\([0-9]+\\):\\(.*\\)\\'" x)
+    (let ((file-name (match-string-no-properties 1 x))
+          (line-number (match-string-no-properties 2 x)))
+      (find-file (expand-file-name
+                  file-name
+                  (ivy-state-directory ivy-last)))
+      (pcase major-mode
+        ('org-mode (when (fboundp 'org-show-all)
+                     (org-show-all))))
+      (goto-char (point-min))
+      (forward-line (1- (string-to-number line-number)))
+      (when (re-search-forward (ivy--regex ivy-text t) (line-end-position) t)
+        (when swiper-goto-start-of-match
+          (goto-char (match-beginning 0))))
+      (swiper--ensure-visible)
+      (run-hooks 'counsel-grep-post-action-hook)
+      (unless (eq ivy-exit 'done)
+        (swiper--cleanup)
+        (swiper--add-overlays (ivy--regex ivy-text))))))
+
 (defun ivy-ag (&optional directory init-input flags)
   "Execute ag command in DIRECTORY with INIT-INPUT and FLAGS.
 Default value for DIRECTORY is current git project or default directory."
@@ -334,7 +356,7 @@ Default value for DIRECTORY is current git project or default directory."
                                :dynamic-collection t
                                :keymap ivy-ag-map
                                :history 'counsel-git-grep-history
-                               :action #'counsel-git-grep-action
+                               :action #'ivy-ag-grep-action
                                :require-match t
                                :caller 'ivy-ag))))
         (progn
