@@ -122,8 +122,8 @@ They are used to determine word at point for initial input."
             (new-dir))
         (setq new-dir (read-directory-name "Search in:\s"))
         (ivy-quit-and-run
-          (funcall-interactively 'ivy-ag new-dir input)))
-    (funcall-interactively 'ivy-ag (read-directory-name "Search in:\s"))))
+          (funcall-interactively #'ivy-ag new-dir input)))
+    (funcall-interactively #'ivy-ag (read-directory-name "Search in:\s"))))
 
 (ivy-configure 'ivy-ag-cd
   :display-transformer-fn 'abbreviate-file-name)
@@ -136,7 +136,7 @@ They are used to determine word at point for initial input."
                        (ivy-ag-file-parent current-dir))))
     (let ((input ivy-text))
       (ivy-quit-and-run
-        (funcall 'ivy-ag parent input)))))
+        (funcall #'ivy-ag parent input)))))
 
 (defun ivy-ag-toggle-vcs-ignores ()
 	"Toggle vcs ignore."
@@ -153,10 +153,10 @@ They are used to determine word at point for initial input."
         (input ivy-text))
     (if (eq 'ivy-ag (ivy-state-caller ivy-last))
         (ivy-quit-and-run
-          (funcall-interactively 'ivy-ag
+          (funcall-interactively #'ivy-ag
                                  (ivy-ag-state-directory ivy-ag-last)
                                  input flags))
-      (funcall-interactively 'ivy-ag (ivy-ag-state-directory ivy-ag-last)
+      (funcall-interactively #'ivy-ag (ivy-ag-state-directory ivy-ag-last)
                              input flags))))
 
 (defvar ivy-ag-dirs-switchers nil)
@@ -179,10 +179,10 @@ They are used to determine word at point for initial input."
   (setq ivy-ag-dirs-switchers
         (append
          '(nil)
-         (mapcar 'expand-file-name
-                 (mapcar 'expand-file-name
+         (mapcar #'expand-file-name
+                 (mapcar #'expand-file-name
                          (seq-filter
-                          'file-exists-p
+                          #'file-exists-p
                           (delete nil ivy-ag-switchable-directories))))))
   (setq ivy-ag-current-dir-index (ivy-ag-index-switcher
                                   step
@@ -196,8 +196,8 @@ They are used to determine word at point for initial input."
         (flags (ivy-ag-state-flags ivy-ag-last)))
     (if (minibuffer-window-active-p (selected-window))
         (ivy-quit-and-run
-          (funcall-interactively 'ivy-ag next-dir input flags))
-      (funcall-interactively 'ivy-ag
+          (funcall-interactively #'ivy-ag next-dir input flags))
+      (funcall-interactively #'ivy-ag
                              (nth ivy-ag-current-dir-index
                                   ivy-ag-dirs-switchers)
                              nil (ivy-ag-state-flags ivy-ag-last)))))
@@ -377,7 +377,7 @@ Default value for DIRECTORY is current git project or default directory."
 (defun ivy-ag-default-dir ()
   "Perfoms search in default directory."
   (interactive)
-  (funcall-interactively 'ivy-ag default-directory nil))
+  (funcall-interactively #'ivy-ag default-directory nil))
 
 (provide 'ivy-ag)
 ;;; ivy-ag.el ends here
