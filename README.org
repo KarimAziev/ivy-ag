@@ -5,7 +5,7 @@ A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silve
 ** Requirements:
 + [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher)
 + [[https://github.com/abo-abo/swiper][ivy]]
-+ emacs >= 26.1
++ emacs >= 27.1
 
 ** Installation
 
