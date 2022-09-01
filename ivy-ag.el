@@ -75,6 +75,9 @@
 (require 'ivy)
 (require 'counsel)
 
+(eval-when-compile
+  (require 'subr-x))
+
 (cl-defstruct ivy-ag-state flags input directory buffer)
 
 (defvar ivy-ag-last (make-ivy-ag-state))
@@ -88,7 +91,8 @@
 
 (defcustom ivy-ag-switchable-directories (list user-emacs-directory)
   "List of directories for switching.
-They can be switched with `ivy-ag-switch-next-dir' and `ivy-ag-switch-prev-dir'."
+They can be switched with commands `ivy-ag-switch-next-dir'
+and `ivy-ag-switch-prev-dir'."
   :type '(repeat directory)
   :group 'ivy-ag)
 
