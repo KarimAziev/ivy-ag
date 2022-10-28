@@ -5,7 +5,7 @@
 ;; Author: Karim Aziiev <karim.aziiev@gmail.com>
 ;; URL: https://github.com/KarimAziev/ivy-ag
 ;; Keywords: matching, tools
-;; Version: 0.1.1
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.4") (counsel "0.13.4"))
 
 ;; This file is NOT part of GNU Emacs.
