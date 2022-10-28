@@ -12,8 +12,10 @@ A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silve
 *** With straight-use-package
 
 #+begin_src elisp
+
 (use-package ivy-ag
-  :init (setq ivy-ag-switchable-directories (list user-emacs-directory org-directory))
+  :init (setq ivy-ag-switchable-directories
+              (list user-emacs-directory org-directory))
   :straight (ivy-ag
              :type git
              :host github
@@ -26,6 +28,7 @@ A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silve
                ("C->" . ivy-ag-switch-next-dir)
                ("C-<" . ivy-ag-switch-prev-dir)
                ("C-c o" . ivy-ag-open-in-other-window)
+               ("C-M-." . ivy-ag-change-file-type)
                ("C-." . ivy-ag-cd))))
 #+end_src
 
@@ -39,7 +42,6 @@ Or download the repository and add it to your ~load-path~.
 
 (require 'ivy-ag)
 
-;; example keymap setup
 (define-key global-map (kbd "C-c C-s") 'ivy-ag)
 (define-key global-map (kbd "C-c M-s") 'ivy-ag-default-dir)
 
@@ -58,19 +60,21 @@ The first one performs a search starting at the current project's root and ~ivy-
 
 During executing ~ivy-ag~ and ~ivy-ag-default-dir~, such commands are available in the minibuffer:
 
-| Default Key | Command                     | Description                                 |
-|-------------+-----------------------------+---------------------------------------------|
-| C-l         | ivy-ag-up                   | Traverse upward current directory           |
-| M-.         | ivy-ag-toggle-vcs-ignores   | Toggle vcs ignores                          |
-| C-c C-o     | ivy-ag-open-in-other-window | Jump to search result in other window       |
-| C->         | ivy-ag-switch-next-dir      | Cycle through ivy-ag-switchable-directories |
-| C-<         | ivy-ag-switch-prev-dir      | Cycle through ivy-ag-switchable-directories |
-| C-.         | ivy-ag-cd                   | Change current search directory             |
-
+| Key           | Command                       |
+|---------------+-------------------------------|
+| C-l           | =ivy-ag-up=                   |
+| C-.           | =ivy-ag-cd=                   |
+| C-<           | =ivy-ag-switch-prev-dir=      |
+| C->           | =ivy-ag-switch-next-dir=      |
+| C-<backspace> | =ivy-ag-up=                   |
+| C-c C-o       | =ivy-ag-open-in-other-window= |
+| M-.           | =ivy-ag-toggle-vcs-ignores=   |
+| C-M-.         | =ivy-ag-change-file-type=     |
 
 To change keybindings, modify the variable ~ivy-ag-map~, e.g.:
 
 #+begin_src emacs-lisp
+
 (define-key ivy-ag-map (kbd "C-<backspace>") 'ivy-ag-up)
 #+end_src
 

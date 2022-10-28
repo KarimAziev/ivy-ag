@@ -6,7 +6,7 @@
 ;; URL: https://github.com/KarimAziev/ivy-ag
 ;; Keywords: matching, tools
 ;; Version: 0.1.1
-;; Package-Requires: ((emacs "26.1"))
+;; Package-Requires: ((emacs "27.1") (ivy "0.13.4") (counsel "0.13.4"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -22,6 +22,7 @@
 ;;
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 ;;; Commentary:
 
 ;; A front-end for ag (the silver searcher) with ivy interface.
@@ -59,6 +60,10 @@
 ;; M-x `ivy-ag-cd'
 ;;      Read directory name and start or resume ag search in it.
 
+;; M-x `ivy-ag-change-file-type'
+;;      Read supported file types and perform search.
+
+
 ;; Customization
 
 ;; `ivy-ag-initial-input-chars'
@@ -70,13 +75,187 @@
 
 ;;; Code:
 
+(eval-when-compile
+  (require 'subr-x))
 
 (require 'cl-lib)
 (require 'ivy)
 (require 'counsel)
 
-(eval-when-compile
-  (require 'subr-x))
+(defvar ivy-ag-configure-keywords
+  '(:parent :initial-input :height :occur
+            :update-fn :init-fn :unwind-fn
+            :index-fn :sort-fn :sort-matches-fn
+            :format-fn :display-fn :display-transformer-fn
+            :alt-done-fn :more-chars :grep-p :exit-codes))
+
+(defvar ivy-ag-ivy-read-keywords
+  '(:predicate :require-match :initial-input
+               :history :preselect
+               :def :keymap :update-fn :sort
+               :unwind :re-builder :matcher
+               :dynamic-collection
+               :extra-props
+               :action :multi-action))
+
+(defmacro ivy-ag-compose (&rest functions)
+  "Return right-to-left composition from FUNCTIONS."
+  (declare (debug t) (pure t) (side-effect-free t))
+  `(ivy-ag-pipe ,@(reverse functions)))
+
+(defun ivy-ag-call-process (command &rest args)
+  "Execute COMMAND with ARGS synchronously.
+
+Return stdout output if command existed with zero status, nil otherwise."
+  (let ((buff (generate-new-buffer command)))
+    (with-current-buffer buff
+      (let ((status (apply #'call-process command nil t nil
+                           (flatten-list args))))
+        (let ((result (string-trim (buffer-string))))
+          (if (zerop status)
+              (prog1 result (kill-current-buffer))
+            (message result) nil))))))
+
+(defun ivy-ag-plist-omit (plist keywords)
+  "Omit KEYWORDS with it's values from PLIST."
+  (if (seq-find (lambda (it) (memq it plist)) keywords)
+      (let ((result))
+        (while plist
+          (let* ((key (pop plist))
+                 (val (pop plist)))
+            (unless (memq key keywords)
+              (push (list key val) result))))
+        (reverse result))
+    plist))
+
+(defun ivy-ag-plist-pick (plist keywords)
+  "Pick KEYWORDS from PLIST."
+  (let ((result)
+        (keyword))
+    (while (setq keyword (pop keywords))
+      (when (memq keyword plist)
+        (let ((value (plist-get plist keyword)))
+          (setq result (nconc result
+                              (list keyword
+                                    value))))))
+    result))
+
+(defun ivy-ag-mark-candidates (candidates)
+  "Mark CANDIDATES from ivy collection."
+  (dolist (cand (ivy-state-collection
+                 ivy-last))
+    (when (member cand
+                  candidates)
+      (let ((marked-cand (concat
+                          ivy-mark-prefix
+                          cand)))
+        (setq ivy--old-cands
+              ivy--all-candidates)
+        (setcar
+         (member cand
+                 ivy--all-candidates)
+         (setcar
+          (member cand
+                  ivy--old-cands)
+          marked-cand))
+        (setq ivy-marked-candidates
+              (append
+               ivy-marked-candidates
+               (list
+                marked-cand)))))))
+
+(defmacro ivy-ag-pipe (&rest functions)
+  "Return left-to-right composition from FUNCTIONS."
+  (declare (debug t) (pure t) (side-effect-free t))
+  `(lambda (&rest args)
+     ,@(let ((init-fn (pop functions)))
+         (list
+          (seq-reduce
+           (lambda (acc fn)
+             (if (symbolp fn)
+                 `(funcall #',fn ,acc)
+               `(funcall ,fn ,acc)))
+           functions
+           (if (symbolp init-fn)
+               `(apply #',init-fn args)
+             `(apply ,init-fn args)))))))
+
+;;;###autoload
+(defun ivy-ag-read-multi (prompt collection &rest ivy-args)
+  "Read COLLECTION with PROMPT and return list with selected candidates.
+IVY-ARGS are combined args both from `ivy-read' and `ivy-configure',
+excluding:
+
+- :action
+- :multi-action
+- :caller
+
+but accepting:
+
+- :persistent-action
+- :premarked
+
+Persistent action will be called with current candidate without exiting
+completion.
+
+Premarked is candidates from COLLECTION which should be initially marked."
+  (interactive)
+  (dolist (alist-sym '(ivy--parents-alist
+                       ivy-initial-inputs-alist
+                       ivy-height-alist
+                       ivy-update-fns-alist
+                       ivy-unwind-fns-alist
+                       ivy-init-fns-alist
+                       ivy-index-functions-alist
+                       ivy-sort-functions-alist
+                       ivy-sort-matches-functions-alist
+                       ivy-format-functions-alist
+                       ivy-display-functions-alist
+                       ivy--display-transformers-alist
+                       ivy-alt-done-functions-alist
+                       ivy-more-chars-alist))
+    (ivy--alist-set alist-sym 'ivy-ag-read-multi nil))
+  (when (and (boundp 'counsel--async-exit-code-plist)
+             (plist-get counsel--async-exit-code-plist
+                        'ivy-ag-read-multi))
+    (setq counsel--async-exit-code-plist
+          (ivy-ag-plist-omit counsel--async-exit-code-plist
+                             '(ivy-ag-read-multi))))
+  (let ((marked)
+        (persistent-action (plist-get ivy-args :persistent-action))
+        (premarked-candidates (plist-get ivy-args :premarked)))
+    (let ((args (append
+                 (list prompt
+                       collection
+                       :caller 'ivy-ag-read-multi
+                       :action (lambda (item)
+                                 (when (and persistent-action
+                                            (null ivy-exit))
+                                   (funcall persistent-action item))
+                                 item)
+                       :multi-action (lambda (children)
+                                       (setq marked children)))
+                 (ivy-ag-plist-pick
+                  ivy-args
+                  (seq-difference ivy-ag-ivy-read-keywords
+                                  '(:multi-action
+                                    :action)))))
+          (configure-args (ivy-ag-plist-pick
+                           ivy-args
+                           ivy-ag-configure-keywords))
+          (item))
+      (when configure-args
+        (push 'ivy-ag-read-multi configure-args)
+        (apply #'ivy-configure configure-args))
+      (setq item (if premarked-candidates
+                     (minibuffer-with-setup-hook
+                         (lambda ()
+                           (when (active-minibuffer-window)
+                             (ivy-ag-mark-candidates premarked-candidates)))
+                       (apply #'ivy-read args))
+                   (apply #'ivy-read args)))
+      (or marked
+          (when item (list item))))))
 
 (cl-defstruct ivy-ag-state flags input directory buffer)
 
@@ -118,6 +297,7 @@ They are used to determine word at point for initial input."
           (directory-file-name parent)
         (file-relative-name parent)))))
 
+;;;###autoload
 (defun ivy-ag-cd ()
   "Read directory name and start or resume ag search in it."
   (interactive)
@@ -132,16 +312,17 @@ They are used to determine word at point for initial input."
 (ivy-configure 'ivy-ag-cd
   :display-transformer-fn 'abbreviate-file-name)
 
+;;;###autoload
 (defun ivy-ag-up ()
   "Change current ag directory to parent directory and resume searching."
   (interactive)
   (when-let* ((current-dir (ivy-ag-state-directory ivy-ag-last))
-              (parent (file-name-as-directory
-                       (ivy-ag-file-parent current-dir))))
+              (parent (ivy-ag-file-parent current-dir)))
     (let ((input ivy-text))
       (ivy-quit-and-run
-        (funcall #'ivy-ag parent input)))))
+        (funcall #'ivy-ag (file-name-as-directory parent) input)))))
 
+;;;###autoload
 (defun ivy-ag-toggle-vcs-ignores ()
 	"Toggle vcs ignore."
   (interactive)
@@ -206,16 +387,19 @@ They are used to determine word at point for initial input."
                                   ivy-ag-dirs-switchers)
                              nil (ivy-ag-state-flags ivy-ag-last)))))
 
+;;;###autoload
 (defun ivy-ag-switch-next-dir (&optional _rest)
 	"Search in next directory defined in `ivy-ag-switchable-directories'."
   (interactive)
   (ivy-ag-switch-dir-index 1))
 
+;;;###autoload
 (defun ivy-ag-switch-prev-dir (&optional _rest)
   "Search in previous directory defined in `ivy-ag-switchable-directories'."
   (interactive)
   (ivy-ag-switch-dir-index -1))
 
+;;;###autoload
 (defun ivy-ag-open-in-other-window ()
 	"Jump to search result in other window."
   (interactive)
@@ -275,6 +459,7 @@ They are used to determine word at point for initial input."
     (define-key map (kbd "C-<")  #'ivy-ag-switch-prev-dir)
     (define-key map (kbd "C-c C-o") #'ivy-ag-open-in-other-window)
     (define-key map (kbd "M-.") #'ivy-ag-toggle-vcs-ignores)
+    (define-key map (kbd "C-M-.") #'ivy-ag-change-file-type)
     (define-key map (kbd "C-.") #'ivy-ag-cd)
     map))
 
@@ -300,9 +485,73 @@ They are used to determine word at point for initial input."
         (swiper--cleanup)
         (swiper--add-overlays (ivy--regex ivy-text))))))
 
+(defun ivy-ag-read-file-type ()
+  "Read multiple file types in the minibuffer, with completion."
+  (let ((types (mapcar #'car (ivy-ag-get-file-types))))
+    (ivy-ag-read-multi "File type: " types
+                       :preselect
+                       (ivy-ag-get-default-file-type))))
+
+(defun ivy-ag-get-file-types ()
+  "Return supported ag file types."
+  (let ((file-types (seq-drop-while
+                     (ivy-ag-compose
+                      'not (apply-partially #'string-prefix-p "--"))
+                     (split-string
+                      (ivy-ag-call-process "ag" "--list-file-types") nil t))))
+    (setq file-types (seq-reduce
+                      (lambda (acc curr)
+                        (setq acc
+                              (push
+                               (if (string-prefix-p "--" curr)
+                                   curr
+                                 (let* ((val (pop acc))
+                                        (cell
+                                         (if (not (consp val))
+                                             (list val curr)
+                                           (setcdr val (nconc (cdr val)
+                                                              (list curr)))
+                                           val)))
+                                   cell))
+                               acc)))
+                      file-types '()))))
+
+(defun ivy-ag-get-default-file-type ()
+  "Get default file type for current buffer filename."
+  (when-let* ((ext (when buffer-file-name
+                     (file-name-extension buffer-file-name)))
+              (file-types (ivy-ag-get-file-types)))
+    (setq ext (concat "." ext))
+    (car (seq-find (ivy-ag-compose (apply-partially #'member ext)
+                                   'cdr)
+                   file-types))))
+
+;;;###autoload
+(defun ivy-ag-change-file-type ()
+  "Read supported file types and perform search."
+  (interactive)
+  (if (active-minibuffer-window)
+      (let ((input ivy-text)
+            (dir (ivy-ag-state-directory ivy-ag-last)))
+        (progn
+          (put 'quit 'error-message "")
+          (run-at-time nil nil
+                       (lambda (directory text-input)
+                         (put 'quit 'error-message "Quit")
+                         (with-demoted-errors "Error: %S"
+                           (let ((file-type (ivy-ag-read-file-type)))
+                             (funcall-interactively #'ivy-ag
+                                                    directory
+                                                    text-input file-type))))
+                       dir input)
+          (abort-recursive-edit)))
+    (funcall-interactively #'ivy-ag nil nil (ivy-ag-read-file-type))))
+
+
+;;;###autoload
 (defun ivy-ag (&optional directory init-input flags)
   "Execute ag command in DIRECTORY with INIT-INPUT and FLAGS.
-Default value for DIRECTORY is current git project or default directory."
+Default value for DIRECTORY is the current git project or default directory."
   (interactive)
   (unless directory
     (setq directory (and (setq directory (or (locate-dominating-file
@@ -323,11 +572,11 @@ Default value for DIRECTORY is current git project or default directory."
                (ivy-ag-state-flags ivy-ag-last))
               (ivy-ag-state-flags ivy-ag-last)
             (or flags '("--smart-case"))))
-    (unless (member "--path-to-ignore" flags)
+    (unless (or (member "--path-to-ignore" flags)
+                (file-exists-p "~/.ignore"))
       (setq flags (append '("--path-to-ignore" "~/.ignore") flags)))
-    (setf (ivy-ag-state-flags ivy-ag-last) flags)
     (setf (ivy-ag-state-flags ivy-ag-last)
-          (seq-uniq (ivy-ag-state-flags ivy-ag-last)))
+          (seq-uniq (ivy-ag-state-flags ivy-ag-last) flags))
     (setf (ivy-ag-state-directory ivy-ag-last) directory)
     (minibuffer-with-setup-hook
         (lambda ()
@@ -369,7 +618,8 @@ Default value for DIRECTORY is current git project or default directory."
             (when swiper--overlays
               (delete-overlay (pop swiper--overlays)))))))))
 
-(ivy-add-actions 'ivy-ag '(("j" ivy-ag-open-in-other-window-action "other window")))
+(ivy-add-actions 'ivy-ag
+                 '(("j" ivy-ag-open-in-other-window-action "other window")))
 
 (ivy-configure 'ivy-ag
   :occur #'counsel-ag-occur
@@ -378,6 +628,7 @@ Default value for DIRECTORY is current git project or default directory."
   :grep-p t
   :exit-codes '(1 "No matches found"))
 
+;;;###autoload
 (defun ivy-ag-default-dir ()
   "Perfoms search in default directory."
   (interactive)
