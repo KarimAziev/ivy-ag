@@ -324,7 +324,7 @@ They are used to determine word at point for initial input."
 
 ;;;###autoload
 (defun ivy-ag-toggle-vcs-ignores ()
-	"Toggle vcs ignore."
+  "Toggle vcs ignore."
   (interactive)
   (let ((flags (if (member "--skip-vcs-ignores"
                            (ivy-ag-state-flags
@@ -360,7 +360,7 @@ They are used to determine word at point for initial input."
            (1- (length switch-list))))))
 
 (defun ivy-ag-switch-dir-index (step)
-	"Increase or decrease `ivy-ag-current-dir-index' on STEP and resume search."
+  "Increase or decrease `ivy-ag-current-dir-index' on STEP and resume search."
   (setq ivy-ag-dirs-switchers
         (append
          '(nil)
@@ -389,7 +389,7 @@ They are used to determine word at point for initial input."
 
 ;;;###autoload
 (defun ivy-ag-switch-next-dir (&optional _rest)
-	"Search in next directory defined in `ivy-ag-switchable-directories'."
+  "Search in next directory defined in `ivy-ag-switchable-directories'."
   (interactive)
   (ivy-ag-switch-dir-index 1))
 
@@ -401,7 +401,7 @@ They are used to determine word at point for initial input."
 
 ;;;###autoload
 (defun ivy-ag-open-in-other-window ()
-	"Jump to search result in other window."
+  "Jump to search result in other window."
   (interactive)
   (ivy-exit-with-action #'ivy-ag-open-in-other-window-action))
 
@@ -434,20 +434,6 @@ They are used to determine word at point for initial input."
            (use-region-p))
     (string-trim (buffer-substring-no-properties
                   (region-beginning) (region-end)))))
-
-(defun ivy-ag-get-word ()
-  "Get current word at point."
-  (when ivy-ag-initial-input-chars
-    (let* ((a (save-excursion
-                (skip-chars-backward ivy-ag-initial-input-chars)
-                (point)))
-           (b (save-excursion
-                (skip-chars-forward ivy-ag-initial-input-chars)
-                (point)))
-           (word (buffer-substring-no-properties a b)))
-      (if (string-blank-p word)
-          nil
-        word))))
 
 (defvar ivy-ag-map
   (let ((map (make-sparse-keymap)))
@@ -559,12 +545,14 @@ Default value for DIRECTORY is the current git project or default directory."
                                              default-directory))
                          (expand-file-name directory))))
   (setf (ivy-ag-state-directory ivy-ag-last) directory)
-  (let ((input (or (seq-find (lambda (it) (and (stringp it)
-                                          (not (string-blank-p it))))
+  (let ((input (or (seq-find (lambda (it)
+                               (and (stringp it)
+                                    (not (string-blank-p it))))
                              `(,init-input
                                ,ivy-ag-last-input
                                ,(or (ivy-ag-get-region)
-                                    (ivy-ag-get-word)))))))
+                                    (when-let ((symb (symbol-at-point)))
+                                      (format "%s" (symbol-name symb)))))))))
     (setq flags
           (if (and
                (null flags)
@@ -584,12 +572,13 @@ Default value for DIRECTORY is the current git project or default directory."
             (insert input)
             (when (active-minibuffer-window)
               (let ((re-chars "[$*+.?^]")
-                    (max (- (point) (length input))))
-                (save-excursion (while (re-search-backward re-chars max t 1)
-                                  (unless (or (looking-back "[\\]" 0)
-                                              (nth 3 (syntax-ppss (point))))
-                                    (insert "\\"))))))
-            (with-current-buffer (current-buffer))))
+                    (max (- (point)
+                            (length input))))
+                (save-excursion
+                  (while (re-search-backward re-chars max t 1)
+                    (unless (or (looking-back "[\\]" 0)
+                                (nth 3 (syntax-ppss (point))))
+                      (insert "\\"))))))))
       (unwind-protect
           (progn (setq counsel-ag-command counsel-ag-base-command)
                  (setq counsel--regex-look-around
