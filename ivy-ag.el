@@ -531,7 +531,9 @@ They are used to determine word at point for initial input."
                                                     text-input file-type))))
                        dir input)
           (abort-recursive-edit)))
-    (funcall-interactively #'ivy-ag nil nil (ivy-ag-read-file-type))))
+    (funcall-interactively #'ivy-ag nil nil (append
+                                             (ivy-ag-state-flags ivy-ag-last)
+                                             (ivy-ag-read-file-type)))))
 
 
 ;;;###autoload
@@ -544,7 +546,6 @@ Default value for DIRECTORY is the current git project or default directory."
                                               default-directory ".git")
                                              default-directory))
                          (expand-file-name directory))))
-  (setf (ivy-ag-state-directory ivy-ag-last) directory)
   (let ((input (or (seq-find (lambda (it)
                                (and (stringp it)
                                     (not (string-blank-p it))))
@@ -554,17 +555,18 @@ Default value for DIRECTORY is the current git project or default directory."
                                     (when-let ((symb (symbol-at-point)))
                                       (format "%s" (symbol-name symb)))))))))
     (setq flags
-          (if (and
-               (null flags)
-               (equal directory (ivy-ag-state-directory ivy-ag-last))
-               (ivy-ag-state-flags ivy-ag-last))
-              (ivy-ag-state-flags ivy-ag-last)
-            (or flags '("--smart-case"))))
+          (delete-dups
+           (if (and
+                (null flags)
+                (equal directory (ivy-ag-state-directory ivy-ag-last))
+                (ivy-ag-state-flags ivy-ag-last))
+               (ivy-ag-state-flags ivy-ag-last)
+             (or flags '("--smart-case")))))
     (unless (or (member "--path-to-ignore" flags)
                 (file-exists-p "~/.ignore"))
       (setq flags (append '("--path-to-ignore" "~/.ignore") flags)))
     (setf (ivy-ag-state-flags ivy-ag-last)
-          (seq-uniq (ivy-ag-state-flags ivy-ag-last) flags))
+          flags)
     (setf (ivy-ag-state-directory ivy-ag-last) directory)
     (minibuffer-with-setup-hook
         (lambda ()
@@ -584,23 +586,20 @@ Default value for DIRECTORY is the current git project or default directory."
                  (setq counsel--regex-look-around
                        counsel--grep-tool-look-around)
                  (counsel-require-program counsel-ag-command)
-                 (let ((prog-name (car (if (listp counsel-ag-command)
-                                           counsel-ag-command
-                                         (split-string counsel-ag-command)))))
-                   (setq counsel-ag-command
-                         (counsel--format-ag-command
-                          (string-join flags "\s") "%s"))
-                   (let ((default-directory directory))
-                     (ivy-read (or (format "%s:\s" directory)
-                                   (concat prog-name ": "))
-                               #'counsel-ag-function
-                               :initial-input ""
-                               :dynamic-collection t
-                               :keymap ivy-ag-map
-                               :history 'counsel-git-grep-history
-                               :action #'ivy-ag-grep-action
-                               :require-match t
-                               :caller 'ivy-ag))))
+                 (setq counsel-ag-command
+                       (counsel--format-ag-command
+                        (string-join flags "\s") "%s"))
+                 (let ((default-directory directory))
+                   (ivy-read
+                    (format "%s %s:\s" directory counsel-ag-command)
+                    #'counsel-ag-function
+                    :initial-input ""
+                    :dynamic-collection t
+                    :keymap ivy-ag-map
+                    :history 'counsel-git-grep-history
+                    :action #'ivy-ag-grep-action
+                    :require-match t
+                    :caller 'ivy-ag)))
         (progn
           (counsel-delete-process)
           (while swiper--overlays
