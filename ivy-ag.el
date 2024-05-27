@@ -1,4 +1,4 @@
-;;; ivy-ag.el --- Configure ag -*- lexical-binding: t -*-
+;;; ivy-ag.el --- A front-end for ag (the silver searcher) with ivy interface -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2022 Karim Aziiev <karim.aziiev@gmail.com>
 
