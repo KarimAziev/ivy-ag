@@ -534,7 +534,8 @@ They are used to determine word at point for initial input."
     (funcall-interactively #'ivy-ag nil nil (append
                                              (ivy-ag-state-flags ivy-ag-last)
                                              (ivy-ag-read-file-type)))))
-
+(defvar ivy-ag-history nil
+  "History for `ivy-ag'.")
 
 ;;;###autoload
 (defun ivy-ag (&optional directory init-input flags)
@@ -552,8 +553,8 @@ Default value for DIRECTORY is the current git project or default directory."
                              `(,init-input
                                ,ivy-ag-last-input
                                ,(or (ivy-ag-get-region)
-                                    (when-let ((symb (symbol-at-point)))
-                                      (format "%s" (symbol-name symb)))))))))
+                                 (when-let ((symb (symbol-at-point)))
+                                  (format "%s" (symbol-name symb)))))))))
     (setq flags
           (delete-dups
            (if (and
@@ -596,7 +597,7 @@ Default value for DIRECTORY is the current git project or default directory."
                     :initial-input ""
                     :dynamic-collection t
                     :keymap ivy-ag-map
-                    :history 'counsel-git-grep-history
+                    :history 'ivy-ag-history
                     :action #'ivy-ag-grep-action
                     :require-match t
                     :caller 'ivy-ag)))
