@@ -82,6 +82,38 @@
 (require 'ivy)
 (require 'counsel)
 
+(defgroup ivy-ag nil
+  "Search with ag and ivy."
+  :link '(url-link :tag "Repository"
+                   "https://github.com/KarimAziev/ivy-ag")
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-switchable-directories (list user-emacs-directory)
+  "List of directories for switching.
+They can be switched with commands `ivy-ag-switch-next-dir'
+and `ivy-ag-switch-prev-dir'."
+  :type '(repeat directory)
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-initial-input-chars "-*_~$A-Za-z0-9:.#\\+"
+  "Chars in the same format as for `skip-chars-forward'.
+They are used to determine word at point for initial input."
+  :type 'string
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-escape-initial-input-chars-regex "[$*+.?^-]"
+  "Regular expression for escaping initial input characters in `ivy-ag'.
+
+A regular expression used to escape initial input characters in
+`ivy-ag'. This regex is applied to the initial input string to
+escape special characters that might interfere with the search
+command."
+  :group 'ivy-ag
+  :type '(radio
+          (const :tag "Don't escape" nil)
+          (regexp :tag "Regex")))
+
+
 (defvar ivy-ag-configure-keywords
   '(:parent :initial-input :height :occur
             :update-fn :init-fn :unwind-fn
@@ -262,25 +294,6 @@ Premarked is candidates from COLLECTION which should be initially marked."
 (defvar ivy-ag-last (make-ivy-ag-state))
 (defvar ivy-ag-last-input nil)
 
-(defgroup ivy-ag nil
-  "Search with ag and ivy."
-  :link '(url-link :tag "Repository"
-                   "https://github.com/KarimAziev/ivy-ag")
-  :group 'ivy-ag)
-
-(defcustom ivy-ag-switchable-directories (list user-emacs-directory)
-  "List of directories for switching.
-They can be switched with commands `ivy-ag-switch-next-dir'
-and `ivy-ag-switch-prev-dir'."
-  :type '(repeat directory)
-  :group 'ivy-ag)
-
-(defcustom ivy-ag-initial-input-chars "-*_~$A-Za-z0-9:.#\\+"
-  "Chars in the same format as for `skip-chars-forward'.
-They are used to determine word at point for initial input."
-  :type 'string
-  :group 'ivy-ag)
-
 (defun ivy-ag-file-parent (path)
   "Return the parent directory to PATH without slash."
   (let ((parent (file-name-directory
@@ -406,7 +419,9 @@ They are used to determine word at point for initial input."
   (ivy-exit-with-action #'ivy-ag-open-in-other-window-action))
 
 (defun ivy-ag-open-in-other-window-action (x)
-  "Go to occurrence X in current Git repository."
+  "Open the file at line number X in another window and highlight the match.
+
+Argument X is a string representing the search result to open."
   (when (string-match "\\`\\(.*?\\):\\([0-9]+\\):\\(.*\\)\\'" x)
     (let ((file-name (match-string-no-properties 1 x))
           (line-number (match-string-no-properties 2 x)))
@@ -573,12 +588,13 @@ Default value for DIRECTORY is the current git project or default directory."
         (lambda ()
           (when input
             (insert input)
-            (when (active-minibuffer-window)
-              (let ((re-chars "[$*+.?^]")
-                    (max (- (point)
+            (when (and ivy-ag-escape-initial-input-chars-regex
+                       (active-minibuffer-window))
+              (let ((max (- (point)
                             (length input))))
                 (save-excursion
-                  (while (re-search-backward re-chars max t 1)
+                  (while (re-search-backward
+                          ivy-ag-escape-initial-input-chars-regex max t 1)
                     (unless (or (looking-back "[\\]" 0)
                                 (nth 3 (syntax-ppss (point))))
                       (insert "\\"))))))))
@@ -593,7 +609,8 @@ Default value for DIRECTORY is the current git project or default directory."
                  (let ((default-directory directory))
                    (ivy-read
                     (format "%s %s:\s" directory counsel-ag-command)
-                    #'counsel-ag-function
+                    (lambda (arg &rest _)
+                      (counsel-ag-function (or arg "")))
                     :initial-input ""
                     :dynamic-collection t
                     :keymap ivy-ag-map
