@@ -552,16 +552,29 @@ Argument X is a string representing the search result to open."
 (defvar ivy-ag-history nil
   "History for `ivy-ag'.")
 
+(defun ivy-ag--current-project-root ()
+  "Return the current project's root directory or the nearest Git directory."
+  (require 'project nil t)
+  (or
+   (when-let ((project (ignore-errors (project-current nil))))
+     (ignore-errors
+       (if (fboundp 'project-root)
+           (project-root project)
+         (with-no-warnings
+           (car (project-roots project))))))
+   (locate-dominating-file
+    default-directory ".git")))
+
 ;;;###autoload
 (defun ivy-ag (&optional directory init-input flags)
   "Execute ag command in DIRECTORY with INIT-INPUT and FLAGS.
 Default value for DIRECTORY is the current git project or default directory."
   (interactive)
   (unless directory
-    (setq directory (and (setq directory (or (locate-dominating-file
-                                              default-directory ".git")
-                                             default-directory))
-                         (expand-file-name directory))))
+    (setq directory
+          (if-let ((dir (ivy-ag--current-project-root)))
+              (expand-file-name dir)
+            default-directory)))
   (let ((input (or (seq-find (lambda (it)
                                (and (stringp it)
                                     (not (string-blank-p it))))
