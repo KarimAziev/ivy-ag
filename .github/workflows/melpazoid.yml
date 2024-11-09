@@ -25,7 +25,7 @@ jobs:
       env:
         LOCAL_REPO: ${{ github.workspace }}
         # RECIPE is your recipe as written for MELPA:
-        RECIPE: (ivy-ag :repo "KarimAziev/ivy-ag" :fetcher github)
+        RECIPE: (ivy-ag :fetcher github :repo "KarimAziev/ivy-ag")
         # set this to false (or remove it) if the package isn't on MELPA:
         EXIST_OK: false
       run: echo $GITHUB_REF && make -C ~/melpazoid
