@@ -565,6 +565,7 @@ Argument X is a string representing the search result to open."
    (locate-dominating-file
     default-directory ".git")))
 
+
 ;;;###autoload
 (defun ivy-ag (&optional directory init-input flags)
   "Execute ag command in DIRECTORY with INIT-INPUT and FLAGS.
@@ -579,7 +580,6 @@ Default value for DIRECTORY is the current git project or default directory."
                                (and (stringp it)
                                     (not (string-blank-p it))))
                              `(,init-input
-                               ,ivy-ag-last-input
                                ,(or (ivy-ag-get-region)
                                  (when-let* ((symb (symbol-at-point)))
                                   (format "%s" (symbol-name symb)))))))))
@@ -619,23 +619,30 @@ Default value for DIRECTORY is the current git project or default directory."
                  (setq counsel-ag-command
                        (counsel--format-ag-command
                         (string-join flags "\s") "%s"))
-                 (let ((default-directory directory))
-                   (ivy-read
-                    (format "%s %s:\s" directory counsel-ag-command)
-                    (lambda (arg &rest _)
-                      (counsel-ag-function (or arg "")))
-                    :initial-input ""
-                    :dynamic-collection t
-                    :keymap ivy-ag-map
-                    :history 'ivy-ag-history
-                    :action #'ivy-ag-grep-action
-                    :require-match t
-                    :caller 'ivy-ag)))
+                 (let ((result))
+                   (let ((default-directory directory)
+                         (history-add-new-input nil))
+                     (setq result (ivy-read
+                                   (format "%s %s:\s" directory counsel-ag-command)
+                                   (lambda (arg &rest _)
+                                     (setq ivy-ag-last-input arg)
+                                     (counsel-ag-function (or arg "")))
+                                   :initial-input ""
+                                   :dynamic-collection t
+                                   :keymap ivy-ag-map
+                                   :history 'ivy-ag-history
+                                   :action #'ivy-ag-grep-action
+                                   :require-match t
+                                   :caller 'ivy-ag))
+                     result)))
         (progn
           (counsel-delete-process)
           (while swiper--overlays
             (when swiper--overlays
-              (delete-overlay (pop swiper--overlays)))))))))
+              (delete-overlay (pop swiper--overlays))))
+          (when (and history-add-new-input)
+            (add-to-history 'ivy-ag-history
+                            ivy-ag-last-input)))))))
 
 (ivy-add-actions 'ivy-ag
                  '(("j" ivy-ag-open-in-other-window-action "other window")))
