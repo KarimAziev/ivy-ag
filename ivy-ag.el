@@ -619,11 +619,15 @@ Default value for DIRECTORY is the current git project or default directory."
                  (setq counsel-ag-command
                        (counsel--format-ag-command
                         (string-join flags "\s") "%s"))
-                 (let ((result))
+                 (let ((result)
+                       (prompt (truncate-string-to-width
+                                (format "%s %s:\s" directory
+                                        counsel-ag-command)
+                                (window-width))))
                    (let ((default-directory directory)
                          (history-add-new-input nil))
                      (setq result (ivy-read
-                                   (format "%s %s:\s" directory counsel-ag-command)
+                                   prompt
                                    (lambda (arg &rest _)
                                      (setq ivy-ag-last-input arg)
                                      (counsel-ag-function (or arg "")))
