@@ -621,7 +621,8 @@ Default value for DIRECTORY is the current git project or default directory."
                         (string-join flags "\s") "%s"))
                  (let ((result)
                        (prompt (truncate-string-to-width
-                                (format "%s %s:\s" directory
+                                (format "%s %s:\s" (abbreviate-file-name
+                                                    directory)
                                         counsel-ag-command)
                                 (window-width))))
                    (let ((default-directory directory)
