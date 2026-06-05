@@ -1,6 +1,6 @@
 ;;; ivy-ag.el --- A front-end for ag (the silver searcher) with ivy interface -*- lexical-binding: t -*-
 
-;; Copyright (C) 2022 Karim Aziiev <karim.aziiev@gmail.com>
+;; Copyright (C) 2022-2026 Karim Aziiev <karim.aziiev@gmail.com>
 
 ;; Author: Karim Aziiev <karim.aziiev@gmail.com>
 ;; URL: https://github.com/KarimAziev/ivy-ag
