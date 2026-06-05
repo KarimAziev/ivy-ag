@@ -101,17 +101,30 @@ They are used to determine word at point for initial input."
   :type 'string
   :group 'ivy-ag)
 
-(defcustom ivy-ag-escape-initial-input-chars-regex "[$*+.?^-]"
-  "Regular expression for escaping initial input characters in `ivy-ag'.
+(defcustom ivy-ag-escape-initial-input-chars-regex 'regexp-quote
+  "Escaping rule for special characters in the initial search input.
 
-A regular expression used to escape initial input characters in
-`ivy-ag'. This regex is applied to the initial input string to
-escape special characters that might interfere with the search
-command."
+Controls escaping of special characters in the initial minibuffer input.
+
+The value can be nil, a function, or a regular expression string.
+
+When nil, the initial input is inserted unchanged.
+
+When a function, it is called with one argument, the initial input
+string, and should return a string to insert or nil to insert nothing.
+
+When a regular expression string, each match in the inserted initial
+input is prefixed with a backslash, except when already escaped or
+inside a string syntax context."
   :group 'ivy-ag
   :type '(radio
           (const :tag "Don't escape" nil)
-          (regexp :tag "Regex")))
+          (function
+           :tag "Use custom function"
+           :doc
+           "Function must accept one argument-an initial input-and return a string or nil"
+           regexp-quote)
+          (regexp :tag "Regex" "[$*+.?^-]")))
 
 
 (defvar ivy-ag-configure-keywords
@@ -626,18 +639,25 @@ Default value for DIRECTORY is the current git project or default directory."
     (setf (ivy-ag-state-directory ivy-ag-last) directory)
     (minibuffer-with-setup-hook
         (lambda ()
-          (when input
-            (insert (substring-no-properties input))
-            (when (and ivy-ag-escape-initial-input-chars-regex
-                       (active-minibuffer-window))
-              (let ((max (- (point)
-                            (length input))))
-                (save-excursion
-                  (while (re-search-backward
-                          ivy-ag-escape-initial-input-chars-regex max t 1)
-                    (unless (or (looking-back "[\\]" 0)
-                                (nth 3 (syntax-ppss (point))))
-                      (insert "\\"))))))))
+          (when (and input
+                     (active-minibuffer-window))
+            (cond ((stringp ivy-ag-escape-initial-input-chars-regex)
+                   (insert (substring-no-properties input))
+                   (let ((max (- (point)
+                                 (length input))))
+                     (save-excursion
+                       (while (re-search-backward
+                               ivy-ag-escape-initial-input-chars-regex max t 1)
+                         (unless (or (looking-back "[\\]" 0)
+                                     (nth 3 (syntax-ppss (point))))
+                           (insert "\\"))))))
+                  ((functionp ivy-ag-escape-initial-input-chars-regex)
+                   (let ((inp
+                          (ignore-errors (funcall
+                                          ivy-ag-escape-initial-input-chars-regex
+                                          input))))
+                     (when inp
+                       (insert inp)))))))
       (unwind-protect
           (progn (setq counsel-ag-command counsel-ag-base-command)
                  (setq counsel--regex-look-around
