@@ -566,6 +566,33 @@ Argument X is a string representing the search result to open."
     default-directory ".git")))
 
 
+
+
+(defun ivy-ag--format-prompt (prompt max-w)
+  "Truncate PROMPT to fit MAX-W and append a trailing colon separator.
+
+Argument PROMPT is a string to be split into parts for formatting.
+
+Argument MAX-W is a maximum display width as an integer."
+  (let* ((parts (split-string prompt nil t))
+         (dir (pop parts))
+         (done))
+    (if (>= (string-width dir) max-w)
+        dir
+      (while (and parts
+                  (not done)
+                  (< (string-width dir) max-w))
+        (let* ((str (pop parts))
+               (next (concat dir " " str)))
+          (unless (and (not parts)
+                       (string= "%s" str))
+            (if (< (string-width next) max-w)
+                (setq dir (concat dir " " str))
+              (setq done t)))))
+      (concat dir (if (string-suffix-p ":" dir)
+                      " " ": ")))))
+
+
 ;;;###autoload
 (defun ivy-ag (&optional directory init-input flags)
   "Execute ag command in DIRECTORY with INIT-INPUT and FLAGS.
@@ -620,11 +647,15 @@ Default value for DIRECTORY is the current git project or default directory."
                        (counsel--format-ag-command
                         (string-join flags "\s") "%s"))
                  (let ((result)
-                       (prompt (truncate-string-to-width
-                                (format "%s %s:\s" (abbreviate-file-name
-                                                    directory)
-                                        counsel-ag-command)
-                                (window-width))))
+                       (prompt
+                        (ivy-ag--format-prompt
+                         (format "%s %s:\s" (abbreviate-file-name
+                                             directory)
+                                 counsel-ag-command)
+                         (- (frame-width)
+                            (or (and input
+                                     (string-width input))
+                                20)))))
                    (let ((default-directory directory)
                          (history-add-new-input nil))
                      (setq result (ivy-read
