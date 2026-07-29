@@ -616,13 +616,15 @@ Default value for DIRECTORY is the current git project or default directory."
           (if-let* ((dir (ivy-ag--current-project-root)))
               (expand-file-name dir)
             default-directory)))
-  (let ((input (seq-find (lambda (it)
-                           (and (stringp it)
-                                (not (string-blank-p it))))
-                         `(,init-input
-                           ,(or (ivy-ag-get-region)
-                             (when-let* ((symb (symbol-at-point)))
-                              (format "%s" (symbol-name symb))))))))
+  (let* ((initial-input (seq-find (lambda (it)
+                                    (and (stringp it)
+                                         (not (string-blank-p it))))
+                                  `(,init-input
+                                    ,(or (ivy-ag-get-region)
+                                      (when-let* ((symb (symbol-at-point)))
+                                       (format "%s" (symbol-name symb)))))))
+         (input (and initial-input
+                     (substring-no-properties initial-input))))
     (setq flags
           (delete-dups
            (if (and
@@ -642,7 +644,7 @@ Default value for DIRECTORY is the current git project or default directory."
           (when (and input
                      (active-minibuffer-window))
             (cond ((stringp ivy-ag-escape-initial-input-chars-regex)
-                   (insert (substring-no-properties input))
+                   (insert input)
                    (let ((max (- (point)
                                  (length input))))
                      (save-excursion
