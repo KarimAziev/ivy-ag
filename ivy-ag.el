@@ -655,44 +655,43 @@ Default value for DIRECTORY is the current git project or default directory."
                            (insert "\\"))))))
                   ((functionp ivy-ag-escape-initial-input-chars-regex)
                    (let ((inp
-                          (ignore-errors (funcall
-                                          ivy-ag-escape-initial-input-chars-regex
-                                          input))))
+                          (ignore-errors
+                            (funcall ivy-ag-escape-initial-input-chars-regex
+                                     input))))
                      (when inp
                        (insert inp)))))))
       (unwind-protect
-          (progn (setq counsel-ag-command counsel-ag-base-command)
-                 (setq counsel--regex-look-around
-                       counsel--grep-tool-look-around)
-                 (counsel-require-program counsel-ag-command)
-                 (setq counsel-ag-command
-                       (counsel--format-ag-command
-                        (string-join flags "\s") "%s"))
-                 (let ((result)
-                       (prompt
-                        (ivy-ag--format-prompt
-                         (format "%s %s:\s" (abbreviate-file-name
-                                             directory)
-                                 counsel-ag-command)
-                         (- (frame-width)
-                            (or (and input
-                                     (string-width input))
-                                20)))))
-                   (let ((default-directory directory)
-                         (history-add-new-input nil))
-                     (setq result (ivy-read
-                                   prompt
-                                   (lambda (arg &rest _)
-                                     (setq ivy-ag-last-input arg)
-                                     (counsel-ag-function (or arg "")))
-                                   :initial-input ""
-                                   :dynamic-collection t
-                                   :keymap ivy-ag-map
-                                   :history 'ivy-ag-history
-                                   :action #'ivy-ag-grep-action
-                                   :require-match t
-                                   :caller 'ivy-ag))
-                     result)))
+          (progn
+            (setq counsel-ag-command counsel-ag-base-command)
+            (setq counsel--regex-look-around
+                  counsel--grep-tool-look-around)
+            (counsel-require-program counsel-ag-command)
+            (setq counsel-ag-command
+                  (counsel--format-ag-command
+                   (string-join flags "\s") "%s"))
+            (let ((prompt
+                   (ivy-ag--format-prompt
+                    (format "%s %s:\s" (abbreviate-file-name
+                                        directory)
+                            counsel-ag-command)
+                    (- (frame-width)
+                       (or (and input
+                                (string-width input))
+                           20)))))
+              (let ((default-directory directory)
+                    (history-add-new-input nil))
+                (ivy-read
+                 prompt
+                 (lambda (arg &rest _)
+                   (setq ivy-ag-last-input arg)
+                   (counsel-ag-function (or arg "")))
+                 :initial-input ""
+                 :dynamic-collection t
+                 :keymap ivy-ag-map
+                 :history 'ivy-ag-history
+                 :action #'ivy-ag-grep-action
+                 :require-match t
+                 :caller 'ivy-ag))))
         (progn
           (counsel-delete-process)
           (while swiper--overlays
