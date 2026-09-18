@@ -5,7 +5,7 @@ A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silve
 ** Requirements:
 + [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher)
 + [[https://github.com/abo-abo/swiper][ivy]]
-+ emacs >= 26.1
++ emacs >= 27.1
 
 ** Installation
 
@@ -85,3 +85,86 @@ List of directories for switching with ~ivy-ag-switch-next-dir~ and ~ivy-ag-swit
 
 + ~ivy-ag-initial-input-chars~
 Chars in the same format as for ~skip-chars-forward~. They are used to determine initial input.
+
+** Search responsiveness and previews
+
+~ivy-ag~ preserves Ivy's configured regexp syntax and result highlighting.
+Search output uses ~ag --vimgrep --width NUM~, where NUM is
+~ivy-ag-max-line-length~. This bounds the text returned from matching lines
+before it reaches Emacs while retaining the original line and byte column.
+Matches beyond the displayed snippet can still be previewed and opened.
+
+~C-j~ previews the result in a separate, read-only buffer, using the same
+non-visiting approach as ~counsel-extra--preview-file~. It does not run
+~find-file-hook~, file-local variables, or major-mode hooks. Files whose lines
+fit within ~ivy-ag-max-line-length~ are shown in full, with their text unchanged.
+Only files containing longer lines use a bounded excerpt around the match.
+In that excerpt, each context line is limited to ~ivy-ag-max-line-length~
+characters, and the selected line is positioned around the reported match
+column. ~ivy-ag-preview-context-lines~ (default 5) applies only to these
+long-line excerpts. Fontification and match overlays are limited to the area
+around point in either preview, without removing ordinary file content.
+
+The preview uses Swiper's regexp match overlays, including capture-group
+faces. Highlighting never activates a region. Previews read the file on disk,
+which is what ~ag~ searches, even when a visiting buffer has unsaved edits.
+That buffer's text, point, mark, active region, narrowing, and major mode are
+left unchanged. If a preview fails, the error is reported with focus returned
+to the minibuffer so you can continue the search. Cancelling the search
+removes the preview and restores the previous windows. ~RET~ intentionally
+visits the actual file at the reported location, deactivating an old region
+before jumping so it cannot be extended accidentally. Previewing a file
+respects ~large-file-warning-threshold~; ~RET~ remains available to open
+larger files explicitly.
+
+Each new query cancels the previous search immediately, including a delayed
+start. Leaving the minibuffer cancels the process and all ivy-ag timers.
+Process filters only collect bounded output; a separate timer updates the
+result list with quitting enabled. If ~C-g~ interrupts regexp highlighting,
+the search process and timers are cancelled as well.
+
+The default limits are:
+
+| Option                     | Default | Meaning                              |
+|----------------------------+---------+--------------------------------------|
+| ~ivy-ag-max-results~        |    2000 | Maximum results per query            |
+| ~ivy-ag-max-line-length~    |    1000 | ag output and preview line width     |
+| ~ivy-ag-max-output-size~    | 2097152 | Maximum collected output characters |
+| ~ivy-ag-search-timeout~     |      10 | Maximum search duration in seconds   |
+
+When a result, output, or time limit is reached, the process is stopped,
+complete results are retained, and the prompt reports the limit. Narrow the
+query or increase the relevant option to collect more results. These limits
+mean a displayed list can be incomplete. Width limits reduce the amount of
+text processed but cannot make every regexp cheap: long sequences of wildcard
+gaps can still backtrack on repetitive text. Such work remains interruptible
+with ~C-g~; an Emacs timer cannot preempt a running regexp.
+
+~ivy-occur~ exports a read-only snapshot of the collected results without
+rerunning the search. Result actions still navigate to the file and column.
+The export uses ordinary ~ivy-occur-mode~, not an editable grep buffer,
+because truncated snippets must not be written back as complete file lines.
+Reverting this buffer redisplays its saved snapshot, start a new search to
+refresh the results.
+
+** Internal names
+
+Implementation helpers, state variables, and the state structure use the
+~ivy-ag--~ prefix. Interactive commands, ~ivy-ag-read-multi~, customization
+options, ~ivy-ag-map~, and ~ivy-ag-history~ retain their public names. Code
+that called helpers such as ~ivy-ag-grep-action~ directly must use the new
+internal name (~ivy-ag--grep-action~) or a public command.
+
+** Development
+
+Run the regression tests with Ivy, Counsel, and Swiper on the load path:
+
+#+begin_src sh
+emacs -Q --batch -L /path/to/swiper -L . \
+  -l test/ivy-ag-test.el -f ert-run-tests-batch-and-exit
+#+end_src
+
+Tests exercise real ag processes, bounded non-visiting previews, UTF-8
+navigation, source-region preservation, full regexp match overlays, cancellation
+during rendering, output limits, timeouts, and occur snapshots. Potentially pathological combined regexps should only be
+benchmarked in an isolated Emacs process with an external timeout.

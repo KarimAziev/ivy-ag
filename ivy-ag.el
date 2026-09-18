@@ -127,14 +127,257 @@ inside a string syntax context."
           (regexp :tag "Regex" "[$*+.?^-]")))
 
 
-(defvar ivy-ag-configure-keywords
+(defcustom ivy-ag-max-results 2000
+  "Maximum number of results collected by one search."
+  :type 'natnum
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-max-line-length 1000
+  "Maximum number of characters shown from a matching line.
+Navigation uses ag's column number, even when the match is beyond this limit."
+  :type 'natnum
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-max-output-size (* 2 1024 1024)
+  "Maximum number of output characters collected by one search."
+  :type 'natnum
+  :group 'ivy-ag)
+
+(defcustom ivy-ag-search-timeout 10
+  "Maximum number of seconds an ag search may run."
+  :type 'number
+  :group 'ivy-ag)
+
+(defvar ivy-ag--last-input nil)
+(defvar ivy-ag--process nil)
+(defvar ivy-ag--start-timer nil)
+(defvar ivy-ag--update-timer nil)
+(defvar ivy-ag--timeout-timer nil)
+
+(defun ivy-ag--cancel-search ()
+  "Cancel pending work and dispose of the current search."
+  (dolist (timer (list ivy-ag--start-timer ivy-ag--update-timer
+                       ivy-ag--timeout-timer))
+    (when (timerp timer)
+      (cancel-timer timer)))
+  (setq ivy-ag--start-timer nil
+        ivy-ag--update-timer nil
+        ivy-ag--timeout-timer nil)
+  (when (processp ivy-ag--process)
+    (let ((process ivy-ag--process))
+      (setq ivy-ag--process nil)
+      (set-process-filter process #'ignore)
+      (set-process-sentinel process #'ignore)
+      (when (process-live-p process)
+        (delete-process process))
+      (when (buffer-live-p (process-buffer process))
+        (kill-buffer (process-buffer process))))))
+
+(defun ivy-ag--stop-search (process reason)
+  "Stop PROCESS, retaining complete results and recording REASON."
+  (when (eq process ivy-ag--process)
+    (process-put process 'ivy-ag--stop-reason reason)
+    (process-put process 'ivy-ag--dirty t)
+    (set-process-filter process #'ignore)
+    (set-process-sentinel process #'ignore)
+    (when (process-live-p process)
+      (delete-process process))
+    (when (timerp ivy-ag--timeout-timer)
+      (cancel-timer ivy-ag--timeout-timer))
+    (with-current-buffer (process-buffer process)
+      (goto-char (point-max))
+      (unless (bolp)
+        (delete-region (line-beginning-position) (point-max))))))
+
+(defun ivy-ag--filter (process output)
+  "Collect bounded OUTPUT from PROCESS without running Ivy or regexps."
+  (when (and (eq process ivy-ag--process)
+             (buffer-live-p (process-buffer process)))
+    (process-put process 'ivy-ag--dirty t)
+    (with-current-buffer (process-buffer process)
+      (goto-char (point-max))
+      (let ((remaining (max 0 (- ivy-ag-max-output-size (buffer-size)))))
+        (insert (substring output 0 (min (length output) remaining)))))
+    (let ((count (with-current-buffer (process-buffer process)
+                   (save-excursion
+                     (goto-char (point-max))
+                     (count-lines (point-min) (line-beginning-position))))))
+      (cond
+       ((>= count ivy-ag-max-results)
+        (with-current-buffer (process-buffer process)
+          (goto-char (point-min))
+          (forward-line ivy-ag-max-results)
+          (delete-region (point) (point-max)))
+        (ivy-ag--stop-search process "result limit"))
+       ((with-current-buffer (process-buffer process)
+          (>= (buffer-size) ivy-ag-max-output-size))
+        (ivy-ag--stop-search process "output limit"))))))
+
+(defun ivy-ag--sentinel (process _event)
+  "Record completion of PROCESS; leave display work to the update timer."
+  (when (and (eq process ivy-ag--process)
+             (memq (process-status process) '(exit signal)))
+    (when (timerp ivy-ag--timeout-timer)
+      (cancel-timer ivy-ag--timeout-timer))
+    (process-put process 'ivy-ag--dirty t)))
+
+(defmacro ivy-ag--with-quit (&rest body)
+  "Run BODY interruptibly and cancel the search if the user quits."
+  (declare (indent 0) (debug t))
+  `(with-local-quit
+     (condition-case nil
+         (progn ,@body)
+       (quit
+        (ivy-ag--cancel-search)
+        (signal 'quit nil)))))
+
+(defun ivy-ag--publish (process)
+  "Display complete results from PROCESS outside its process filter."
+  (when (and (eq process ivy-ag--process)
+             (active-minibuffer-window)
+             (eq (ivy-state-caller ivy-last) 'ivy-ag)
+             (eq (process-get process 'ivy-ag--state) ivy-last)
+             (process-get process 'ivy-ag--dirty))
+    (process-put process 'ivy-ag--dirty nil)
+    (ivy-ag--with-quit
+     (let* ((finished (not (process-live-p process)))
+            (reason (process-get process 'ivy-ag--stop-reason))
+            (candidates
+             (with-current-buffer (process-buffer process)
+               (save-excursion
+                 (goto-char (point-max))
+                 (unless finished (beginning-of-line))
+                 (split-string (buffer-substring-no-properties
+                                (point-min) (point)) "\n" t))))
+            (ivy--prompt
+             (format "%d%s %s" (length candidates)
+                     (cond (reason (concat " [" reason "]"))
+                           (finished "") (t "+"))
+                     (ivy-state-prompt ivy-last))))
+       (when (and finished (not reason)
+                  (not (memq (process-exit-status process) '(0 1))))
+         (setq counsel--async-last-error-string
+               (mapconcat #'identity candidates "\n")
+               candidates nil)
+         (setq ivy--prompt (format "ag exited %d: %s"
+                                   (process-exit-status process)
+                                   (ivy-state-prompt ivy-last))))
+       (setf (ivy-state-extra-props ivy-last)
+             (plist-put (ivy-state-extra-props ivy-last)
+                        :ivy-ag--candidates candidates))
+       (setq ivy--all-candidates candidates
+             ivy--old-cands candidates)
+       ;; Do not ask Ivy to re-match/re-sort the results with the query regexp.
+       (ivy--insert-minibuffer (ivy--format candidates))
+       (when finished
+         (when (timerp ivy-ag--update-timer)
+           (cancel-timer ivy-ag--update-timer))
+         (setq ivy-ag--update-timer nil))))))
+
+(defun ivy-ag--start-search (command directory state)
+  "Start COMMAND in DIRECTORY for Ivy STATE."
+  (setq ivy-ag--start-timer nil)
+  (when (and (active-minibuffer-window) (eq state ivy-last))
+    (let* ((default-directory directory)
+           (process-connection-type nil)
+           (buffer (generate-new-buffer " *ivy-ag*")))
+      (condition-case err
+          (progn
+            (setq ivy-ag--process
+                  (if (listp command)
+                      (apply #'start-file-process "ivy-ag" buffer command)
+                    (start-file-process-shell-command "ivy-ag" buffer command)))
+            (set-process-query-on-exit-flag ivy-ag--process nil)
+            (setq counsel--async-last-error-string nil)
+            (process-put ivy-ag--process 'ivy-ag--state state)
+            (set-process-filter ivy-ag--process #'ivy-ag--filter)
+            (set-process-sentinel ivy-ag--process #'ivy-ag--sentinel)
+            (setq ivy-ag--update-timer
+                  (run-at-time 0.1 0.1 #'ivy-ag--publish ivy-ag--process)
+                  ivy-ag--timeout-timer
+                  (run-at-time ivy-ag-search-timeout nil #'ivy-ag--stop-search
+                               ivy-ag--process "time limit")))
+        (error (kill-buffer buffer)
+               (signal (car err) (cdr err)))))))
+
+(defun ivy-ag--collection (input &rest _)
+  "Search for INPUT, or return the current query's collected results.
+Ivy calls the collection again to export an occur buffer.  Reuse the
+snapshot instead of starting another search for unchanged input."
+  (let ((query (list input ivy-case-fold-search
+                     (ivy-state-re-builder ivy-last) counsel-ag-command)))
+    (if (and (not (eq this-command 'ivy-resume))
+             (equal query (plist-get (ivy-state-extra-props ivy-last)
+                                     :ivy-ag--query)))
+        (plist-get (ivy-state-extra-props ivy-last) :ivy-ag--candidates)
+      (prog1 (ivy-ag--search input)
+        (setf (ivy-state-extra-props ivy-last)
+              (plist-put (ivy-state-extra-props ivy-last)
+                         :ivy-ag--query query))))))
+
+(defun ivy-ag--search (input)
+  "Cancel the previous query and search asynchronously for INPUT."
+  (ivy-ag--cancel-search)
+  (setq ivy-ag--last-input input
+        ivy--all-candidates nil
+        ivy--old-cands nil)
+  (setf (ivy-state-extra-props ivy-last)
+        (plist-put (ivy-state-extra-props ivy-last) :ivy-ag--candidates nil))
+  (let* ((parts (counsel--split-command-args input))
+         (ivy-text (cdr parts)))
+    (or (ivy-more-chars)
+        (let* ((regex (counsel--grep-regex ivy-text))
+               (switches (concat (if (ivy--case-fold-p ivy-text) " -i " " -s ")
+                                 (counsel--ag-extra-switches regex)
+                                 (car parts)
+                                 (format " --nocolor --vimgrep --width %d "
+                                         (max 1 ivy-ag-max-line-length))))
+               (command (counsel--format-ag-command
+                         switches
+                         (if (listp counsel-ag-command) regex
+                           (shell-quote-argument regex)))))
+          ;; With a pipe, ag otherwise treats stdin as the search target for
+          ;; legacy command templates that do not include --vimgrep.
+          (setq command (if (listp command) (append command '("."))
+                          (concat command " .")))
+          (setq ivy-ag--start-timer
+                (run-at-time counsel-async-command-delay nil
+                             #'ivy-ag--start-search command
+                             (ivy-state-directory ivy-last) ivy-last))
+          nil))))
+
+(defun ivy-ag--occur (candidates)
+  "Export collected CANDIDATES as a read-only Ivy snapshot.
+Lines may be truncated, so this deliberately uses `ivy-occur-mode'
+instead of an editable grep buffer."
+  (let ((directory (ivy-state-directory ivy-last)))
+    (ivy-occur-mode)
+    ;; Ivy otherwise re-runs the combined regexp for overlays after an occur
+    ;; action, bypassing our column-based navigation.
+    (setq-local ivy-highlight-grep-commands
+                (remq 'ivy-ag ivy-highlight-grep-commands))
+    (setq default-directory directory)
+    (let ((inhibit-read-only t))
+      (insert (format "%d collected candidates (snapshot; lines may be truncated):\n"
+                      (length candidates)))
+      (dolist (candidate candidates)
+        (insert "    " (ivy--format-minibuffer-line candidate) "\n")))
+    (goto-char (point-min))
+    (read-only-mode 1)))
+
+(defun ivy-ag--unwind ()
+  "Cancel search work and remove preview overlays."
+  (ivy-ag--cancel-search)
+  (ivy-ag--cleanup-preview))
+
+(defvar ivy-ag--configure-keywords
   '(:parent :initial-input :height :occur
             :update-fn :init-fn :unwind-fn
             :index-fn :sort-fn :sort-matches-fn
             :format-fn :display-fn :display-transformer-fn
             :alt-done-fn :more-chars :grep-p :exit-codes))
 
-(defvar ivy-ag-ivy-read-keywords
+(defvar ivy-ag--ivy-read-keywords
   '(:predicate :require-match :initial-input
                :history :preselect
                :def :keymap :update-fn :sort
@@ -143,12 +386,12 @@ inside a string syntax context."
                :extra-props
                :action :multi-action))
 
-(defmacro ivy-ag-compose (&rest functions)
+(defmacro ivy-ag--compose (&rest functions)
   "Return right-to-left composition from FUNCTIONS."
   (declare (debug t) (pure t) (side-effect-free t))
-  `(ivy-ag-pipe ,@(reverse functions)))
+  `(ivy-ag--pipe ,@(reverse functions)))
 
-(defun ivy-ag-call-process (command &rest args)
+(defun ivy-ag--call-process (command &rest args)
   "Execute COMMAND with ARGS synchronously.
 
 Return stdout output if command existed with zero status, nil otherwise."
@@ -161,7 +404,7 @@ Return stdout output if command existed with zero status, nil otherwise."
               (prog1 result (kill-current-buffer))
             (message result) nil))))))
 
-(defun ivy-ag-plist-omit (plist keywords)
+(defun ivy-ag--plist-omit (plist keywords)
   "Omit KEYWORDS with it's values from PLIST."
   (if (seq-find (lambda (it) (memq it plist)) keywords)
       (let ((result))
@@ -173,7 +416,7 @@ Return stdout output if command existed with zero status, nil otherwise."
         (reverse result))
     plist))
 
-(defun ivy-ag-plist-pick (plist keywords)
+(defun ivy-ag--plist-pick (plist keywords)
   "Pick KEYWORDS from PLIST."
   (let ((result)
         (keyword))
@@ -185,7 +428,7 @@ Return stdout output if command existed with zero status, nil otherwise."
                                     value))))))
     result))
 
-(defun ivy-ag-mark-candidates (candidates)
+(defun ivy-ag--mark-candidates (candidates)
   "Mark CANDIDATES from ivy collection."
   (dolist (cand (ivy-state-collection
                  ivy-last))
@@ -209,7 +452,7 @@ Return stdout output if command existed with zero status, nil otherwise."
                (list
                 marked-cand)))))))
 
-(defmacro ivy-ag-pipe (&rest functions)
+(defmacro ivy-ag--pipe (&rest functions)
   "Return left-to-right composition from FUNCTIONS."
   (declare (debug t) (pure t) (side-effect-free t))
   `(lambda (&rest args)
@@ -264,7 +507,7 @@ Premarked is candidates from COLLECTION which should be initially marked."
              (plist-get counsel--async-exit-code-plist
                         'ivy-ag-read-multi))
     (setq counsel--async-exit-code-plist
-          (ivy-ag-plist-omit counsel--async-exit-code-plist
+          (ivy-ag--plist-omit counsel--async-exit-code-plist
                              '(ivy-ag-read-multi))))
   (let ((marked)
         (persistent-action (plist-get ivy-args :persistent-action))
@@ -280,14 +523,14 @@ Premarked is candidates from COLLECTION which should be initially marked."
                                  item)
                        :multi-action (lambda (children)
                                        (setq marked children)))
-                 (ivy-ag-plist-pick
+                 (ivy-ag--plist-pick
                   ivy-args
-                  (seq-difference ivy-ag-ivy-read-keywords
+                  (seq-difference ivy-ag--ivy-read-keywords
                                   '(:multi-action
                                     :action)))))
-          (configure-args (ivy-ag-plist-pick
+          (configure-args (ivy-ag--plist-pick
                            ivy-args
-                           ivy-ag-configure-keywords))
+                           ivy-ag--configure-keywords))
           (item))
       (when configure-args
         (push 'ivy-ag-read-multi configure-args)
@@ -296,18 +539,19 @@ Premarked is candidates from COLLECTION which should be initially marked."
                      (minibuffer-with-setup-hook
                          (lambda ()
                            (when (active-minibuffer-window)
-                             (ivy-ag-mark-candidates premarked-candidates)))
+                             (ivy-ag--mark-candidates premarked-candidates)))
                        (apply #'ivy-read args))
                    (apply #'ivy-read args)))
       (or marked
           (when item (list item))))))
 
-(cl-defstruct ivy-ag-state flags input directory buffer)
+(cl-defstruct (ivy-ag--state (:constructor ivy-ag--make-state)
+                            (:copier ivy-ag--copy-state))
+  flags input directory buffer)
 
-(defvar ivy-ag-last (make-ivy-ag-state))
-(defvar ivy-ag-last-input nil)
+(defvar ivy-ag--last (ivy-ag--make-state))
 
-(defun ivy-ag-file-parent (path)
+(defun ivy-ag--file-parent (path)
   "Return the parent directory to PATH without slash."
   (let ((parent (file-name-directory
                  (directory-file-name
@@ -336,14 +580,14 @@ Premarked is candidates from COLLECTION which should be initially marked."
     (funcall-interactively #'ivy-ag (read-directory-name "Search in:\s"))))
 
 (ivy-configure 'ivy-ag-cd
-  :display-transformer-fn 'abbreviate-file-name)
+  :display-transformer-fn #'abbreviate-file-name)
 
 ;;;###autoload
 (defun ivy-ag-up ()
   "Change current ag directory to parent directory and resume searching."
   (interactive)
-  (when-let* ((current-dir (ivy-ag-state-directory ivy-ag-last))
-              (parent (ivy-ag-file-parent current-dir)))
+  (when-let* ((current-dir (ivy-ag--state-directory ivy-ag--last))
+              (parent (ivy-ag--file-parent current-dir)))
     (let ((input ivy-text))
       (ivy-quit-and-run
         (funcall #'ivy-ag (file-name-as-directory parent) input)))))
@@ -353,27 +597,27 @@ Premarked is candidates from COLLECTION which should be initially marked."
   "Toggle vcs ignore."
   (interactive)
   (let ((flags (if (member "--skip-vcs-ignores"
-                           (ivy-ag-state-flags
-                            ivy-ag-last))
-                   (setf (ivy-ag-state-flags ivy-ag-last)
+                           (ivy-ag--state-flags
+                            ivy-ag--last))
+                   (setf (ivy-ag--state-flags ivy-ag--last)
                          (remove "--skip-vcs-ignores"
-                                 (ivy-ag-state-flags
-                                  ivy-ag-last)))
-                 (append (ivy-ag-state-flags ivy-ag-last)
+                                 (ivy-ag--state-flags
+                                  ivy-ag--last)))
+                 (append (ivy-ag--state-flags ivy-ag--last)
                          '("--skip-vcs-ignores"))))
         (input ivy-text))
     (if (eq 'ivy-ag (ivy-state-caller ivy-last))
         (ivy-quit-and-run
           (funcall-interactively #'ivy-ag
-                                 (ivy-ag-state-directory ivy-ag-last)
+                                 (ivy-ag--state-directory ivy-ag--last)
                                  input flags))
-      (funcall-interactively #'ivy-ag (ivy-ag-state-directory ivy-ag-last)
+      (funcall-interactively #'ivy-ag (ivy-ag--state-directory ivy-ag--last)
                              input flags))))
 
-(defvar ivy-ag-dirs-switchers nil)
-(defvar ivy-ag-current-dir-index 0)
+(defvar ivy-ag--dirs-switchers nil)
+(defvar ivy-ag--current-dir-index 0)
 
-(defun ivy-ag-index-switcher (step current-index switch-list)
+(defun ivy-ag--index-switcher (step current-index switch-list)
   "Increase or decrease CURRENT-INDEX depending on STEP value and SWITCH-LIST."
   (cond ((> step 0)
          (if (>= (+ step current-index)
@@ -385,9 +629,9 @@ Premarked is candidates from COLLECTION which should be initially marked."
              (+ step current-index)
            (1- (length switch-list))))))
 
-(defun ivy-ag-switch-dir-index (step)
-  "Increase or decrease `ivy-ag-current-dir-index' on STEP and resume search."
-  (setq ivy-ag-dirs-switchers
+(defun ivy-ag--switch-dir-index (step)
+  "Increase or decrease `ivy-ag--current-dir-index' on STEP and resume search."
+  (setq ivy-ag--dirs-switchers
         (append
          '(nil)
          (mapcar #'expand-file-name
@@ -395,67 +639,47 @@ Premarked is candidates from COLLECTION which should be initially marked."
                          (seq-filter
                           #'file-exists-p
                           (delete nil ivy-ag-switchable-directories))))))
-  (setq ivy-ag-current-dir-index (ivy-ag-index-switcher
+  (setq ivy-ag--current-dir-index (ivy-ag--index-switcher
                                   step
-                                  ivy-ag-current-dir-index
-                                  ivy-ag-dirs-switchers))
+                                  ivy-ag--current-dir-index
+                                  ivy-ag--dirs-switchers))
   (let ((input ivy-text)
-        (next-dir (or (nth ivy-ag-current-dir-index
-                           ivy-ag-dirs-switchers)
+        (next-dir (or (nth ivy-ag--current-dir-index
+                           ivy-ag--dirs-switchers)
                       (locate-dominating-file
                        default-directory ".git")))
-        (flags (ivy-ag-state-flags ivy-ag-last)))
+        (flags (ivy-ag--state-flags ivy-ag--last)))
     (if (minibuffer-window-active-p (selected-window))
         (ivy-quit-and-run
           (funcall-interactively #'ivy-ag next-dir input flags))
       (funcall-interactively #'ivy-ag
-                             (nth ivy-ag-current-dir-index
-                                  ivy-ag-dirs-switchers)
-                             nil (ivy-ag-state-flags ivy-ag-last)))))
+                             (nth ivy-ag--current-dir-index
+                                  ivy-ag--dirs-switchers)
+                             nil (ivy-ag--state-flags ivy-ag--last)))))
 
 ;;;###autoload
 (defun ivy-ag-switch-next-dir (&optional _rest)
   "Search in next directory defined in `ivy-ag-switchable-directories'."
   (interactive)
-  (ivy-ag-switch-dir-index 1))
+  (ivy-ag--switch-dir-index 1))
 
 ;;;###autoload
 (defun ivy-ag-switch-prev-dir (&optional _rest)
   "Search in previous directory defined in `ivy-ag-switchable-directories'."
   (interactive)
-  (ivy-ag-switch-dir-index -1))
+  (ivy-ag--switch-dir-index -1))
 
 ;;;###autoload
 (defun ivy-ag-open-in-other-window ()
   "Jump to search result in other window."
   (interactive)
-  (ivy-exit-with-action #'ivy-ag-open-in-other-window-action))
+  (ivy-exit-with-action #'ivy-ag--open-in-other-window-action))
 
-(defun ivy-ag-open-in-other-window-action (x)
-  "Open the file at line number X in another window and highlight the match.
+(defun ivy-ag--open-in-other-window-action (candidate)
+  "Visit search CANDIDATE in another window."
+  (ivy-ag--visit candidate t))
 
-Argument X is a string representing the search result to open."
-  (when (string-match "\\`\\(.*?\\):\\([0-9]+\\):\\(.*\\)\\'" x)
-    (let ((file-name (match-string-no-properties 1 x))
-          (line-number (match-string-no-properties 2 x)))
-      (find-file-other-window (expand-file-name
-                               file-name
-                               (ivy-state-directory ivy-last)))
-      (goto-char (point-min))
-      (forward-line (1- (string-to-number line-number)))
-      (when (re-search-forward (ivy--regex ivy-text t) (line-end-position) t)
-        (when (and (boundp 'swiper-goto-start-of-match))
-          (goto-char (match-beginning 0))))
-      (when (fboundp 'swiper--ensure-visible)
-        (swiper--ensure-visible))
-      (run-hooks 'counsel-grep-post-action-hook)
-      (unless (eq ivy-exit 'done)
-        (when (fboundp 'swiper--cleanup)
-          (swiper--cleanup))
-        (when (fboundp 'swiper--add-overlays)
-          (swiper--add-overlays (ivy--regex ivy-text)))))))
-
-(defun ivy-ag-get-region ()
+(defun ivy-ag--get-region ()
   "Get current region or nil."
   (when
       (and (region-active-p)
@@ -477,66 +701,244 @@ Argument X is a string representing the search result to open."
     (define-key map (kbd "C-.") #'ivy-ag-cd)
     map))
 
-(defun ivy-ag-grep-action (x)
-  "Go to occurrence X in current Git repository."
-  (when (string-match "\\`\\(.*?\\):\\([0-9]+\\):\\(.*\\)\\'" x)
-    (let ((file-name (match-string-no-properties 1 x))
-          (line-number (match-string-no-properties 2 x)))
-      (find-file (expand-file-name
-                  file-name
-                  (ivy-state-directory ivy-last)))
-      (pcase major-mode
-        ('org-mode (when (fboundp 'org-show-all)
-                     (org-show-all))))
-      (goto-char (point-min))
-      (forward-line (1- (string-to-number line-number)))
-      (when (re-search-forward (ivy--regex ivy-text t) (line-end-position) t)
-        (when swiper-goto-start-of-match
-          (goto-char (match-beginning 0))))
-      (swiper--ensure-visible)
-      (run-hooks 'counsel-grep-post-action-hook)
-      (unless (eq ivy-exit 'done)
-        (swiper--cleanup)
-        (swiper--add-overlays (ivy--regex ivy-text))))))
+(defvar ivy-ag--preview-buffer nil)
+(defvar ivy-ag--preview-window-configuration nil)
 
-(defun ivy-ag-read-file-type ()
+(defcustom ivy-ag-preview-context-lines 5
+  "Number of context lines around a match when previewing long-line files.
+Files whose lines fit `ivy-ag-max-line-length' are previewed in full."
+  :type 'natnum
+  :group 'ivy-ag)
+
+(defun ivy-ag--goto-location (line column)
+  "Move to LINE and the one-based byte COLUMN in the current buffer."
+  (goto-char (point-min))
+  (forward-line (1- line))
+  (when column
+    (let ((byte (+ (position-bytes (point)) (max 0 (1- column))))
+          (end (line-end-position)))
+      (goto-char (if (>= byte (position-bytes end)) end
+                   (or (byte-to-position byte) (point)))))))
+
+(defun ivy-ag--preview-excerpt (line column)
+  "Return bounded text around LINE and byte COLUMN in the current buffer.
+Return (TEXT POINT FIRST-LINE).  POINT is the position within TEXT at which
+to place point, and FIRST-LINE is the corresponding source line number.
+Do not change point, mark, narrowing, or text in the source buffer."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (ivy-ag--goto-location line column)
+      (let* ((target (point))
+             (target-line (line-number-at-pos))
+             (first-line (max 1 (- target-line ivy-ag-preview-context-lines)))
+             (last-line (+ target-line ivy-ag-preview-context-lines))
+             (width (max 1 ivy-ag-max-line-length))
+             (current-line first-line)
+             (length 0)
+             (position 1)
+             lines)
+        (forward-line (- first-line target-line))
+        (while (and (<= current-line last-line) (not (eobp)))
+          (let* ((begin (line-beginning-position))
+                 (end (line-end-position))
+                 (start (if (and (= current-line target-line)
+                                 (> (- end begin) width))
+                            (max begin (- target (/ width 4)))
+                          begin))
+                 (text (buffer-substring-no-properties
+                        start (min end (+ start width)))))
+            (when (= current-line target-line)
+              (setq position (+ 1 length (- target start))))
+            (push text lines)
+            (setq length (+ length (length text) 1)))
+          (forward-line 1)
+          (cl-incf current-line))
+        (list (mapconcat #'identity (nreverse lines) "\n")
+              position first-line)))))
+
+(defun ivy-ag--long-lines-p ()
+  "Return non-nil if a line exceeds `ivy-ag-max-line-length'."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((width (max 1 ivy-ag-max-line-length))
+          found)
+      (while (and (not found) (not (eobp)))
+        (let ((begin (point)))
+          (forward-line 1)
+          (setq found (> (- (point) begin (if (eq (char-before) ?\n) 1 0))
+                         width))))
+      found)))
+
+(defun ivy-ag--preview-content (line column)
+  "Return preview text and location for LINE and byte COLUMN.
+Return (TEXT POINT FIRST-LINE EXCERPT-P).  Preserve the entire buffer
+unless it contains long lines.  Leave the source buffer's state unchanged."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (if (ivy-ag--long-lines-p)
+          (append (ivy-ag--preview-excerpt line column) '(t))
+        (ivy-ag--goto-location line column)
+        (list (buffer-substring-no-properties (point-min) (point-max))
+              (point) 1 nil)))))
+
+(defun ivy-ag--preview-file (file line column &optional other-window)
+  "Preview FILE from disk at LINE and COLUMN without visiting or altering it.
+Like `counsel-extra--preview-file', read into a temporary buffer and delay
+mode hooks.  Keep ordinary files intact; use an excerpt for long-line files.
+Fontify and highlight around point rather than processing the entire file.
+When OTHER-WINDOW is non-nil, display the preview in another window."
+  (when-let* ((threshold large-file-warning-threshold)
+              (attributes (file-attributes file)))
+    (when (> (file-attribute-size attributes) threshold)
+      (user-error "File too large for preview; use RET to visit it")))
+  (let ((content (with-temp-buffer
+                   (insert-file-contents file)
+                   (ivy-ag--preview-content line column))))
+    (unless (buffer-live-p ivy-ag--preview-buffer)
+      (setq ivy-ag--preview-buffer (generate-new-buffer " *ivy-ag-preview*")))
+    (swiper--cleanup)
+    (with-current-buffer ivy-ag--preview-buffer
+      (let ((inhibit-read-only t))
+        (fundamental-mode)
+        (erase-buffer)
+        (insert (nth 0 content))
+        ;; This binding is for mode detection only.  The preview never becomes
+        ;; a visiting buffer and neither file hooks nor local variables run.
+        (let ((buffer-file-name file)
+              (enable-local-variables nil)
+              (enable-local-eval nil))
+          (delay-mode-hooks
+            (set-auto-mode)))
+        (setq-local default-directory (file-name-directory file))
+        (when (nth 3 content)
+          (setq-local truncate-lines t))
+        (setq-local header-line-format
+                    (format "%s:%d — preview%s" (abbreviate-file-name file) line
+                            (if (nth 3 content) " excerpt" "")))
+        (setq-local display-line-numbers-offset (1- (nth 2 content)))
+        (setq-local buffer-read-only t)
+        (setq mark-active nil)
+        (set-marker (mark-marker) nil)
+        (goto-char (min (point-max)
+                        (nth 1 content)))
+        (font-lock-ensure (line-beginning-position (- (window-height)))
+                          (line-end-position (window-height)))
+        (set-buffer-modified-p nil)))
+    (unless ivy-ag--preview-window-configuration
+      (setq ivy-ag--preview-window-configuration (current-window-configuration)))
+    (funcall (if other-window #'switch-to-buffer-other-window
+               #'switch-to-buffer)
+             ivy-ag--preview-buffer)
+    (let* ((input (cdr (counsel--split-command-args ivy-text)))
+           (ivy--old-re (funcall (ivy-state-re-builder ivy-last) input))
+           (regexp (ivy-re-to-str ivy--old-re))
+           (inhibit-quit nil))
+      (swiper--add-overlays regexp nil nil (selected-window)))))
+
+(defun ivy-ag--cleanup-preview ()
+  "Dispose of the preview and restore the windows it temporarily replaced."
+  (swiper--cleanup)
+  (when ivy-ag--preview-window-configuration
+    (set-window-configuration ivy-ag--preview-window-configuration)
+    (setq ivy-ag--preview-window-configuration nil))
+  (when (buffer-live-p ivy-ag--preview-buffer)
+    (kill-buffer ivy-ag--preview-buffer))
+  (setq ivy-ag--preview-buffer nil))
+
+(defun ivy-ag--visit (candidate &optional other-window)
+  "Preview CANDIDATE, or visit it after accepting the search.
+OTHER-WINDOW displays the result in another window."
+  (when (string-match
+         "\\`\\(.*?\\):\\([0-9]+\\):\\(?:\\([0-9]+\\):\\)?" candidate)
+    (let ((file (expand-file-name (match-string-no-properties 1 candidate)
+                                  (ivy-state-directory ivy-last)))
+          (line (string-to-number (match-string 2 candidate)))
+          (column (when (match-string 3 candidate)
+                    (string-to-number (match-string 3 candidate)))))
+      (if (not (eq ivy-exit 'done))
+          (let ((inhibit-quit nil))
+            (condition-case err
+                (ivy-ag--preview-file file line column other-window)
+              (error
+               (when-let* ((window (active-minibuffer-window)))
+                 (select-window window))
+               (signal (car err) (cdr err)))))
+        (ivy-ag--cleanup-preview)
+        (funcall (if other-window #'find-file-other-window #'find-file) file)
+        ;; An intentional jump must not extend a previously active region.
+        (deactivate-mark t)
+        (widen)
+        (ivy-ag--goto-location line column)
+        (swiper--ensure-visible)
+        (run-hooks 'counsel-grep-post-action-hook)))))
+
+(defun ivy-ag--grep-action (candidate)
+  "Visit search CANDIDATE in the current window."
+  (ivy-ag--visit candidate))
+
+(defun ivy-ag--read-file-type ()
   "Read multiple file types in the minibuffer, with completion."
-  (let ((types (mapcar #'car (ivy-ag-get-file-types))))
+  (let ((types (mapcar #'car (ivy-ag--get-file-types))))
     (ivy-ag-read-multi "File type: " types
                        :preselect
-                       (ivy-ag-get-default-file-type))))
+                       (ivy-ag--get-default-file-type))))
 
-(defun ivy-ag-get-file-types ()
-  "Return supported ag file types."
-  (let ((file-types (seq-drop-while
-                     (ivy-ag-compose
-                      'not (apply-partially #'string-prefix-p "--"))
-                     (split-string
-                      (ivy-ag-call-process "ag" "--list-file-types") nil t))))
-    (setq file-types (seq-reduce
-                      (lambda (acc curr)
-                        (setq acc
-                              (push
-                               (if (string-prefix-p "--" curr)
-                                   curr
-                                 (let* ((val (pop acc))
-                                        (cell
-                                         (if (not (consp val))
-                                             (list val curr)
-                                           (setcdr val (nconc (cdr val)
-                                                              (list curr)))
-                                           val)))
-                                   cell))
-                               acc)))
-                      file-types '()))))
+(defvar ivy-ag--file-types nil)
 
-(defun ivy-ag-get-default-file-type ()
+(defun ivy-ag--get-file-types ()
+  "Return `ag' file types as a cached alist.
+
+The value is obtained by calling:
+
+  ag --list-file-types
+
+and parsing its output into an alist of the form:
+
+  ((\"--TYPE\" \".ext1\" \".ext2\" ...)
+   ...)
+
+where each car is an `ag' file type switch (for example
+\"--python\" or \"--cc\") and the remaining elements are file
+extensions associated with that type.
+
+The result is cached in `ivy-ag--file-types' after the first call
+and reused on subsequent calls."
+  (or ivy-ag--file-types
+      (let* ((alist (ivy-ag--call-process "ag" "--list-file-types"))
+             (file-types
+              (and alist
+                   (seq-drop-while
+                    (ivy-ag--compose
+                     not (apply-partially #'string-prefix-p "--"))
+                    (split-string alist nil t)))))
+        (setq ivy-ag--file-types
+              (nreverse
+               (seq-reduce
+                (lambda (acc curr)
+                  (setq acc
+                        (push
+                         (if (string-prefix-p "--" curr)
+                             curr
+                           (let* ((val (pop acc))
+                                  (cell
+                                   (if (not (consp val))
+                                       (list val curr)
+                                     (setcdr val (nconc (cdr val)
+                                                        (list curr)))
+                                     val)))
+                             cell))
+                         acc)))
+                file-types '()))))))
+
+(defun ivy-ag--get-default-file-type ()
   "Get default file type for current buffer filename."
   (when-let* ((ext (when buffer-file-name
                      (file-name-extension buffer-file-name)))
-              (file-types (ivy-ag-get-file-types)))
+              (file-types (ivy-ag--get-file-types)))
     (setq ext (concat "." ext))
-    (car (seq-find (ivy-ag-compose (apply-partially #'member ext)
+    (car (seq-find (ivy-ag--compose (apply-partially #'member ext)
                                    'cdr)
                    file-types))))
 
@@ -546,22 +948,22 @@ Argument X is a string representing the search result to open."
   (interactive)
   (if (active-minibuffer-window)
       (let ((input ivy-text)
-            (dir (ivy-ag-state-directory ivy-ag-last)))
+            (dir (ivy-ag--state-directory ivy-ag--last)))
         (progn
           (put 'quit 'error-message "")
           (run-at-time nil nil
                        (lambda (directory text-input)
                          (put 'quit 'error-message "Quit")
                          (with-demoted-errors "Error: %S"
-                           (let ((file-type (ivy-ag-read-file-type)))
+                           (let ((file-type (ivy-ag--read-file-type)))
                              (funcall-interactively #'ivy-ag
                                                     directory
                                                     text-input file-type))))
                        dir input)
           (abort-recursive-edit)))
     (funcall-interactively #'ivy-ag nil nil (append
-                                             (ivy-ag-state-flags ivy-ag-last)
-                                             (ivy-ag-read-file-type)))))
+                                             (ivy-ag--state-flags ivy-ag--last)
+                                             (ivy-ag--read-file-type)))))
 (defvar ivy-ag-history nil
   "History for `ivy-ag'.")
 
@@ -577,8 +979,6 @@ Argument X is a string representing the search result to open."
            (car (project-roots project))))))
    (locate-dominating-file
     default-directory ".git")))
-
-
 
 
 (defun ivy-ag--format-prompt (prompt max-w)
@@ -620,7 +1020,7 @@ Default value for DIRECTORY is the current git project or default directory."
                                     (and (stringp it)
                                          (not (string-blank-p it))))
                                   `(,init-input
-                                    ,(or (ivy-ag-get-region)
+                                    ,(or (ivy-ag--get-region)
                                       (when-let* ((symb (symbol-at-point)))
                                        (format "%s" (symbol-name symb)))))))
          (input (and initial-input
@@ -629,13 +1029,13 @@ Default value for DIRECTORY is the current git project or default directory."
           (delete-dups
            (if (and
                 (null flags)
-                (equal directory (ivy-ag-state-directory ivy-ag-last))
-                (ivy-ag-state-flags ivy-ag-last))
-               (ivy-ag-state-flags ivy-ag-last)
+                (equal directory (ivy-ag--state-directory ivy-ag--last))
+                (ivy-ag--state-flags ivy-ag--last))
+               (ivy-ag--state-flags ivy-ag--last)
              (or flags '("--smart-case")))))
-    (setf (ivy-ag-state-flags ivy-ag-last)
+    (setf (ivy-ag--state-flags ivy-ag--last)
           flags)
-    (setf (ivy-ag-state-directory ivy-ag-last) directory)
+    (setf (ivy-ag--state-directory ivy-ag--last) directory)
     (minibuffer-with-setup-hook
         (lambda ()
           (when (and input
@@ -679,31 +1079,30 @@ Default value for DIRECTORY is the current git project or default directory."
                     (history-add-new-input nil))
                 (ivy-read
                  prompt
-                 (lambda (arg &rest _)
-                   (setq ivy-ag-last-input arg)
-                   (counsel-ag-function (or arg "")))
+                 #'ivy-ag--collection
                  :initial-input ""
                  :dynamic-collection t
                  :keymap ivy-ag-map
                  :history 'ivy-ag-history
-                 :action #'ivy-ag-grep-action
+                 :action #'ivy-ag--grep-action
                  :require-match t
                  :caller 'ivy-ag))))
         (progn
-          (counsel-delete-process)
-          (while swiper--overlays
-            (when swiper--overlays
-              (delete-overlay (pop swiper--overlays))))
-          (when (and history-add-new-input)
+          (ivy-ag--unwind)
+          (when (and history-add-new-input
+                     (stringp ivy-ag--last-input)
+                     (not (string-empty-p ivy-ag--last-input)))
             (add-to-history 'ivy-ag-history
-                            ivy-ag-last-input)))))))
+                            (substring-no-properties
+                             ivy-ag--last-input))))))))
 
 (ivy-add-actions 'ivy-ag
-                 '(("j" ivy-ag-open-in-other-window-action "other window")))
+                 '(("j" ivy-ag--open-in-other-window-action "other window")))
 
 (ivy-configure 'ivy-ag
-  :occur #'counsel-ag-occur
-  :unwind-fn #'counsel--grep-unwind
+  :occur #'ivy-ag--occur
+  :unwind-fn #'ivy-ag--unwind
+  :index-fn #'ivy-recompute-index-zero
   :display-transformer-fn #'counsel-git-grep-transformer
   :grep-p t
   :exit-codes '(1 "No matches found"))
