@@ -66,10 +66,6 @@
 
 ;; Customization
 
-;; `ivy-ag-initial-input-chars'
-;;      Chars in the same format as for `skip-chars-forward'.
-;;      They are used to determine word at point for initial input.
-
 ;; `ivy-ag-switchable-directories'
 ;;      List of directories, which can be switched in minibuffer.
 
@@ -89,16 +85,14 @@
   :group 'ivy-ag)
 
 (defcustom ivy-ag-switchable-directories (list user-emacs-directory)
-  "List of directories for switching.
-They can be switched with commands `ivy-ag-switch-next-dir'
-and `ivy-ag-switch-prev-dir'."
-  :type '(repeat directory)
-  :group 'ivy-ag)
+  "List of directories available for switching during searches in minibuffer.
 
-(defcustom ivy-ag-initial-input-chars "-*_~$A-Za-z0-9:.#\\+"
-  "Chars in the same format as for `skip-chars-forward'.
-They are used to determine word at point for initial input."
-  :type 'string
+
+The switching commands (`ivy-ag-switch-next-dir' and `ivy-ag-switch-prev-dir')
+cycle through the listed directories while an `ivy-ag' search is active,
+restarting the search in the selected directory with the current input and
+flags."
+  :type '(repeat directory)
   :group 'ivy-ag)
 
 (defcustom ivy-ag-escape-initial-input-chars-regex 'regexp-quote
@@ -468,7 +462,7 @@ Return stdout output if command existed with zero status, nil otherwise."
                `(apply #',init-fn args)
              `(apply ,init-fn args)))))))
 
-;;;###autoload
+
 (defun ivy-ag-read-multi (prompt collection &rest ivy-args)
   "Read COLLECTION with PROMPT and return list with selected candidates.
 IVY-ARGS are combined args both from `ivy-read' and `ivy-configure',
@@ -567,7 +561,7 @@ Premarked is candidates from COLLECTION which should be initially marked."
           (directory-file-name parent)
         (file-relative-name parent)))))
 
-;;;###autoload
+
 (defun ivy-ag-cd ()
   "Read directory name and start or resume ag search in it."
   (interactive)
@@ -582,7 +576,6 @@ Premarked is candidates from COLLECTION which should be initially marked."
 (ivy-configure 'ivy-ag-cd
   :display-transformer-fn #'abbreviate-file-name)
 
-;;;###autoload
 (defun ivy-ag-up ()
   "Change current ag directory to parent directory and resume searching."
   (interactive)
@@ -592,7 +585,7 @@ Premarked is candidates from COLLECTION which should be initially marked."
       (ivy-quit-and-run
         (funcall #'ivy-ag (file-name-as-directory parent) input)))))
 
-;;;###autoload
+
 (defun ivy-ag-toggle-vcs-ignores ()
   "Toggle vcs ignore."
   (interactive)
@@ -657,19 +650,18 @@ Premarked is candidates from COLLECTION which should be initially marked."
                                   ivy-ag--dirs-switchers)
                              nil (ivy-ag--state-flags ivy-ag--last)))))
 
-;;;###autoload
+
 (defun ivy-ag-switch-next-dir (&optional _rest)
   "Search in next directory defined in `ivy-ag-switchable-directories'."
   (interactive)
   (ivy-ag--switch-dir-index 1))
 
-;;;###autoload
+
 (defun ivy-ag-switch-prev-dir (&optional _rest)
   "Search in previous directory defined in `ivy-ag-switchable-directories'."
   (interactive)
   (ivy-ag--switch-dir-index -1))
 
-;;;###autoload
 (defun ivy-ag-open-in-other-window ()
   "Jump to search result in other window."
   (interactive)
@@ -942,7 +934,6 @@ and reused on subsequent calls."
                                    'cdr)
                    file-types))))
 
-;;;###autoload
 (defun ivy-ag-change-file-type ()
   "Read supported file types and perform search."
   (interactive)
