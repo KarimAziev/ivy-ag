@@ -1,11 +1,18 @@
 * ivy-ag
 
-A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher) with [[https://github.com/abo-abo/swiper][ivy]] interface. The package provides functionality like ~counsel-ag~ but allows to traverse upwards search directory and some extra switches.
+Search with [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher) through [[https://github.com/abo-abo/swiper][Ivy]] and Transient.
+Change directories and filters while keeping the current query, preview
+matches without visiting files, and restore complete searches from history
+or named presets.  Search results can also be rerun in a buffer for wgrep
+editing or with ag's output options.
 
-** Requirements:
-+ [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher)
-+ [[https://github.com/abo-abo/swiper][ivy]]
-+ emacs >= 27.1
+** Requirements
+
++ [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher), available on ~exec-path~
++ Emacs 30.1 or later
++ [[https://github.com/abo-abo/swiper][Ivy and Counsel]] 0.13.4 or later, including Counsel's Swiper dependency
++ Transient 0.13.4 or later and its dependencies
++ ~wgrep~ (optional, for editable search results)
 
 ** Installation
 
@@ -22,19 +29,13 @@ A front-end for [[https://github.com/ggreer/the_silver_searcher][ag]] (the silve
              :repo "KarimAziev/ivy-ag")
   :bind (("C-c C-s" . ivy-ag)
          ("C-c M-s" . ivy-ag-default-dir)
-         (:map ivy-ag-map
-               ("C-l" . ivy-ag-up)
-               ("M-." . ivy-ag-toggle-vcs-ignores)
-               ("C->" . ivy-ag-switch-next-dir)
-               ("C-<" . ivy-ag-switch-prev-dir)
-               ("C-c o" . ivy-ag-open-in-other-window)
-               ("C-M-." . ivy-ag-change-file-type)
-               ("C-." . ivy-ag-cd))))
+         ("C-c m" . ivy-ag-menu)))
 #+end_src
 
 *** Manually
 
-Or download the repository and add it to your ~load-path~.
+Install the dependencies listed above, then download this repository and
+add it to your ~load-path~.
 
 #+begin_src elisp
 
@@ -42,23 +43,19 @@ Or download the repository and add it to your ~load-path~.
 
 (require 'ivy-ag)
 
-(define-key global-map (kbd "C-c C-s") 'ivy-ag)
-(define-key global-map (kbd "C-c M-s") 'ivy-ag-default-dir)
-
-(define-key ivy-ag-map (kbd "C-l") 'ivy-ag-up)
-(define-key ivy-ag-map (kbd "M-.") 'ivy-ag-toggle-vcs-ignores)
-(define-key ivy-ag-map (kbd "C->") 'ivy-ag-switch-next-dir)
-(define-key ivy-ag-map (kbd "C-<") 'ivy-ag-switch-prev-dir)
-(define-key ivy-ag-map (kbd "C-.") 'ivy-ag-cd)
+(keymap-global-set "C-c C-s" #'ivy-ag)
+(keymap-global-set "C-c M-s" #'ivy-ag-default-dir)
+(keymap-global-set "C-c m" #'ivy-ag-menu)
 #+end_src
 
 ** Usage
 
-There are two main commands: ~ivy-ag~ and ~ivy-ag-default-dir~.
+Start with ~ivy-ag~ to search the current project's root, falling back to
+the nearest Git root or the current directory.  ~ivy-ag-default-dir~ starts
+in the current directory.  Use ~ivy-ag-menu~ to configure a search before
+running it, or ~ivy-ag-output-menu~ for a separate output buffer.
 
-The first one performs a search starting at the current project's root and ~ivy-ag-default-dir~ - at the current directory.
-
-During executing ~ivy-ag~ and ~ivy-ag-default-dir~, such commands are available in the minibuffer:
+The search minibuffer has these default bindings:
 
 | Key           | Command                       |
 |---------------+-------------------------------|
@@ -70,21 +67,159 @@ During executing ~ivy-ag~ and ~ivy-ag-default-dir~, such commands are available 
 | C-c C-o       | =ivy-ag-open-in-other-window= |
 | M-.           | =ivy-ag-toggle-vcs-ignores=   |
 | C-M-.         | =ivy-ag-change-file-type=     |
+| C-c C-f       | =ivy-ag-change-file-pattern=  |
+| C-c C-i       | =ivy-ag-change-exclusions=    |
+| C-o           | =ivy-ag-minibuffer-menu=      |
+| C-c M-m       | =ivy-ag-minibuffer-menu=      |
+| C-j           | =ivy-call= (preview)          |
+| RET           | =ivy-done= (visit result)     |
+| M-q           | =ivy-ag-edit-results=         |
 
 To change keybindings, modify the variable ~ivy-ag-map~, e.g.:
 
 #+begin_src emacs-lisp
 
-(define-key ivy-ag-map (kbd "C-<backspace>") 'ivy-ag-up)
+(keymap-set ivy-ag-map "C-<backspace>" #'ivy-ag-up)
 #+end_src
+
+** Search menu, history, and named presets
+
+~M-x ivy-ag-menu~ configures a search outside the minibuffer.  During a
+search, ~C-o~ or ~C-c M-m~ opens the menu with the current query, directory,
+and filters.  ~RET~ runs the search; reopening the menu preserves the query
+verbatim, including regexp syntax.
+
+Use ~d~ to choose the directory, ~=~ to edit the query, ~F~ to select
+excluded paths, and ~L~ to set the display width.
+
+The menu includes file types, a filename regexp (~-G~), ignore patterns,
+selected concrete exclusions, an ignore file (~-p~), and traversal options.
+~c~ cycles Ivy's default case behavior, ignore case, case sensitive, and smart
+case.  ~n~ selects literal text; ~-Q~, ~-F~, ~--literal~, and
+~--fixed-strings~ are treated as aliases.  Literal searches pass the text
+unchanged to ag and use literal highlighting.  Regexp searches retain the
+configured Ivy regexp builder.
+
+~f~ accepts ag's filename regular expressions, while ~i~ and ~I~ accept
+repeatable ignore patterns.  ~+~ accepts extra search switches that have no
+dedicated control; double-quote values containing spaces.  Options with a
+dedicated search or output control must be set through that control.
+
+~L~ selects the display width.  Running the search applies this value to
+~ivy-ag-max-line-length~, affecting both ag output and previews.  This is a
+runtime setting; use Customize to change its permanent default.
+
+~C-M-p~ and ~C-M-n~ use Transient's normal history to restore *complete*
+searches: directory, query, selected exclusions, display width, and search
+and output flags.  Transient's normal set/save operations preserve this
+context too.  Its history is persisted according to ~transient-save-history~.
+
+Presets are independent, named records in ~ivy-ag-presets~.  Several presets
+can refer to the same directory, such as “Home documents”, “Home hidden
+configuration”, and “Home source code”.  A nonempty label/description is
+required when saving.  Completion shows both the label and the directory;
+the menu shows the loaded preset's label.
+
+| Key   | Preset operation                                          |
+|-------+-----------------------------------------------------------|
+| S     | Save all settings under a label; update an existing label |
+| P     | Load a preset, including its query and directory          |
+| C-c d | Delete a preset                                           |
+| C-c a | Toggle a preset as its directory's automatic default      |
+
+Saving and deleting presets use ~customize-save-variable~, so records
+survive Emacs restarts.  A preset is not automatic until explicitly enabled.
+Only one preset is automatic for a given directory.  Automatic presets also
+apply in descendants, with the most specific directory winning; an existing
+search in the same directory or explicit function arguments take precedence.
+For Straight repositories, configure ~--skip-vcs-ignores~, save a labeled
+preset rooted at =~/.emacs.d/straight/repos/=, then enable it with ~C-c a~.
+Other named presets for that directory remain available through ~P~.
+
+*** Selecting concrete files and directories
+
+~F~ opens ~ivy-ag-read-files~, a reusable Ivy file reader that returns a list
+of absolute paths.  ~C-j~ navigates directories, ~M-m~ marks, ~M-u~ unmarks,
+~M-a~ toggles visible marks, and ~M-U~ clears all marks.  Marks retain their
+absolute identity while navigating.  ~RET~ accepts the marked paths, or
+the current path when nothing is marked.  ~C-c C-c~ accepts the marks even when the selection is empty;
+~C-g~ cancels the reader.
+
+Selected exclusions become anchored, relative ~--ignore-dir=~ arguments.
+Despite its name, ag's option excludes files as well as directories.  Pattern
+characters in selected filenames are escaped.  A selected =sub/file.txt=
+excludes that concrete path, not every nested path ending in =sub/file.txt=.
+When the search directory changes, exclusions are recomputed relative to it;
+selections outside the new root have no effect and remain available when
+returning to the original root.  Use ~i~ or ~I~ for intentionally written
+ignore patterns instead.  Argument values containing spaces are preserved.
+
+The file-type reader supports Ivy marks and ~C-c C-k~ to clear all type
+filters.  The minibuffer commands ~C-c C-f~, ~C-c C-i~, and ~C-M-.~ edit the same
+filters while preserving the current search's other settings.
+
+*** Editable results and output options
+
+~e~ in either menu, or ~M-q~ during an Ivy search, reruns the query
+asynchronously with complete source lines in a grep buffer.  With ~wgrep~
+installed, ~C-x C-q~ enables editing and ~C-c C-c~ applies changes to source
+buffers.  Save the changed buffers normally, or configure wgrep's own saving
+behavior.  This is textual replacement across files, not language-aware
+symbol renaming.  The existing ~ivy-occur~ command continues to export a
+bounded, read-only snapshot.
+
+~O~ opens ~ivy-ag-output-menu~.  It retains search filters and offers counts,
+filenames, context lines, statistics, headings, line numbers, output width,
+and machine formats.  ~RET~ runs asynchronously in a separate output buffer;
+~q~ returns to search settings and retains the output options.  The output
+width is independent of the display width used by Ivy.  Full-line grep and
+output searches are not subject to the minibuffer's result, time, or output
+size limits; their processes can be stopped with the buffer's standard
+compilation commands.
+
+~M-w~ copies a shell-quoted command including its working directory.  It uses
+the same resolved query and arguments as the corresponding destination.
+~C-c C-a~ displays that command without copying it.
+
+*** Calling from Lisp
+
+~(ivy-ag directory input flags)~ treats a supplied ~input~ as an existing Ivy
+query and preserves it verbatim, including an empty string.  Only text
+inferred from a region or symbol is processed by
+~ivy-ag-escape-initial-input-chars-regex~; nil leaves that text unchanged,
+and literal mode bypasses quoting entirely.
+
+Omitting ~flags~ allows reuse of the current directory's settings or an
+automatic preset.  Explicit nil means an empty flag list.  Each list element
+is one argument; for example:
+
+#+begin_src emacs-lisp
+(ivy-ag default-directory "foo bar"
+        '("--literal" "--file-search-regex=notes archive"))
+#+end_src
+
+Counsel's ~query -- switches~ and ~switches -- query~ forms remain available.
+Double-quote inline option values containing spaces.  Prefer list-valued
+~counsel-ag-base-command~ templates; legacy shell templates are also supported.
 
 ** Customization
 
+The tables above show default bindings.  Customize ~ivy-ag-map~ for the
+search minibuffer, ~ivy-ag-read-files-map~ for selecting paths,
+~ivy-ag-types-map~ for selecting file types, and ~ivy-ag-grep-mode-map~ for
+full-line results.  These maps inherit from Ivy, Counsel, or Grep as
+appropriate; defaults are installed only when each map is first defined.
+Prompts and Emacs help resolve the current bindings, including inherited
+bindings, and show the command name when it is unbound.  For example:
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'ivy-ag
+  (keymap-unset ivy-ag-types-map "C-c C-k")
+  (keymap-set ivy-ag-types-map "C-c C-z" #'ivy-ag--clear-type-selection))
+#+end_src
+
 + ~ivy-ag-switchable-directories~
 List of directories for switching with ~ivy-ag-switch-next-dir~ and ~ivy-ag-switch-prev-dir~.
-
-+ ~ivy-ag-initial-input-chars~
-Chars in the same format as for ~skip-chars-forward~. They are used to determine initial input.
 
 ** Search responsiveness and previews
 
@@ -125,12 +260,12 @@ the search process and timers are cancelled as well.
 
 The default limits are:
 
-| Option                     | Default | Meaning                              |
-|----------------------------+---------+--------------------------------------|
-| ~ivy-ag-max-results~        |    2000 | Maximum results per query            |
-| ~ivy-ag-max-line-length~    |    1000 | ag output and preview line width     |
-| ~ivy-ag-max-output-size~    | 2097152 | Maximum collected output characters |
-| ~ivy-ag-search-timeout~     |      10 | Maximum search duration in seconds   |
+| Option                   | Default | Meaning                             |
+|--------------------------+---------+-------------------------------------|
+| ~ivy-ag-max-results~     | 2000    | Maximum results per query           |
+| ~ivy-ag-max-line-length~ | 1000    | ag output and preview line width    |
+| ~ivy-ag-max-output-size~ | 2097152 | Maximum collected output characters |
+| ~ivy-ag-search-timeout~  | 10      | Maximum search duration in seconds  |
 
 When a result, output, or time limit is reached, the process is stopped,
 complete results are retained, and the prompt reports the limit. Narrow the
@@ -144,27 +279,36 @@ with ~C-g~; an Emacs timer cannot preempt a running regexp.
 rerunning the search. Result actions still navigate to the file and column.
 The export uses ordinary ~ivy-occur-mode~, not an editable grep buffer,
 because truncated snippets must not be written back as complete file lines.
-Reverting this buffer redisplays its saved snapshot, start a new search to
+Reverting this buffer redisplays its saved snapshot.  Start a new search to
 refresh the results.
 
 ** Internal names
 
 Implementation helpers, state variables, and the state structure use the
-~ivy-ag--~ prefix. Interactive commands, ~ivy-ag-read-multi~, customization
-options, ~ivy-ag-map~, and ~ivy-ag-history~ retain their public names. Code
-that called helpers such as ~ivy-ag-grep-action~ directly must use the new
-internal name (~ivy-ag--grep-action~) or a public command.
+~ivy-ag--~ prefix.  Public entry points include ~ivy-ag-read-multi~,
+~ivy-ag-read-files~, the documented search and menu commands, customization
+options, keymaps, and ~ivy-ag-history~.  Code that called helpers such as
+~ivy-ag-grep-action~ directly must use the new internal name
+(~ivy-ag--grep-action~) or a public command.
 
 ** Development
 
-Run the regression tests with Ivy, Counsel, and Swiper on the load path:
+Run the regression tests with Ivy, Counsel, Swiper, Transient and its
+dependencies on the load path.  Add wgrep to exercise the full editing test:
 
 #+begin_src sh
-emacs -Q --batch -L /path/to/swiper -L . \
-  -l test/ivy-ag-test.el -f ert-run-tests-batch-and-exit
+emacs -Q --batch \
+  -L /path/to/compat -L /path/to/cond-let -L /path/to/llama \
+  -L /path/to/transient/lisp -L /path/to/swiper -L /path/to/emacs-wgrep \
+  -L . \
+  -l ivy-ag.el -l test/ivy-ag-test.el -f ert-run-tests-batch-and-exit
 #+end_src
 
 Tests exercise real ag processes, bounded non-visiting previews, UTF-8
 navigation, source-region preservation, full regexp match overlays, cancellation
-during rendering, output limits, timeouts, and occur snapshots. Potentially pathological combined regexps should only be
+during rendering, output limits, timeouts, occur snapshots, complete Transient
+history, named presets, literal and case behavior, argument quoting, exclusions,
+full-line wgrep edits, file-type selection outside Transient, and customized
+keymaps and help text.  Tests that require wgrep are skipped when it is
+unavailable.  Potentially pathological combined regexps should only be
 benchmarked in an isolated Emacs process with an external timeout.
