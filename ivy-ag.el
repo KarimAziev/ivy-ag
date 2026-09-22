@@ -1944,12 +1944,15 @@ Enabling a preset replaces any automatic preset for that same directory."
 (transient-define-prefix ivy-ag-output-menu ()
   "Configure output for a separate asynchronous ag buffer.
 The output menu retains the search menu's query, filters and context."
-  :value (lambda () (ivy-ag--state-value (ivy-ag--menu-initial-state) t))
+  :value (lambda ()
+           (ivy-ag--state-value (ivy-ag--menu-initial-state) t))
   :incompatible '(("--count" "--files-with-matches" "--files-without-matches"
                    "--stats-only" "--filename-pattern=")
                   ("--vimgrep" "--ackmate")
-                  ("--numbers" "--nonumbers") ("--heading" "--noheading")
-                  ("--filename" "--nofilename") ("--break" "--nobreak"))
+                  ("--numbers" "--nonumbers")
+                  ("--heading" "--noheading")
+                  ("--filename" "--nofilename")
+                  ("--break" "--nobreak"))
   ivy-ag--context-group
   [["Output"
     ("c" "Counts" "--count")
@@ -1981,12 +1984,15 @@ The output menu retains the search menu's query, filters and context."
     ("x" "No filenames" "--nofilename")]]
   ivy-ag--preset-group
   ["Actions"
-   ("C-c C-a" ivy-ag-show-transient-args) ("M-w" ivy-ag-menu-args)
-   ("e" ivy-ag-menu-edit-results) ("q" ivy-ag-output-back)
+   ("C-c C-a" ivy-ag-show-transient-args)
+   ("M-w" ivy-ag-menu-args)
+   ("e" ivy-ag-menu-edit-results)
+   ("q" ivy-ag-output-back)
    ("RET" ivy-ag-menu-output-run)]
   (interactive)
   (let ((state (if (eq transient-current-command 'ivy-ag-menu)
-                   (ivy-ag--menu-state) (ivy-ag--menu-initial-state))))
+                   (ivy-ag--menu-state)
+                 (ivy-ag--menu-initial-state))))
     (transient-setup #'ivy-ag-output-menu nil nil
                      :value (ivy-ag--state-value state t))))
 
