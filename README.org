@@ -1,4 +1,4 @@
-* ivy-ag
+* About
 
 Search with [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher) through [[https://github.com/abo-abo/swiper][Ivy]] and Transient.
 Change directories and filters while keeping the current query, preview
@@ -6,7 +6,26 @@ matches without visiting files, and restore complete searches from history
 or named presets.  Search results can also be rerun in a buffer for wgrep
 editing or with ag's output options.
 
-** Requirements
+* Table of Contents                                       :TOC_2_gh:QUOTE:
+#+BEGIN_QUOTE
+- [[#about][About]]
+- [[#requirements][Requirements]]
+  - [[#straightel][straight.el]]
+  - [[#quelpa][Quelpa]]
+  - [[#vc][VC]]
+  - [[#manual-installation][Manual installation]]
+  - [[#doom-emacs][Doom Emacs]]
+- [[#usage][Usage]]
+- [[#search-menu-history-and-named-presets][Search menu, history, and named presets]]
+  - [[#selecting-concrete-files-and-directories][Selecting concrete files and directories]]
+  - [[#editable-results-and-output-options][Editable results and output options]]
+  - [[#calling-from-lisp][Calling from Lisp]]
+- [[#customization][Customization]]
+  - [[#search-responsiveness-and-previews][Search responsiveness and previews]]
+- [[#development][Development]]
+#+END_QUOTE
+
+* Requirements
 
 + [[https://github.com/ggreer/the_silver_searcher][ag]] (the silver searcher), available on ~exec-path~
 + Emacs 30.1 or later
@@ -14,31 +33,59 @@ editing or with ag's output options.
 + Transient 0.13.4 or later and its dependencies
 + ~wgrep~ (optional, for editable search results)
 
-** Installation
-
-*** With straight-use-package
-
-#+begin_src elisp
-
+#+html: <details><summary>
+** straight.el
+#+html: </summary>
+#+begin_src elisp :eval no
 (use-package ivy-ag
-  :init (setq ivy-ag-switchable-directories
-              (list user-emacs-directory org-directory))
   :straight (ivy-ag
-             :type git
              :host github
-             :repo "KarimAziev/ivy-ag")
+             :repo "KarimAziev/ivy-ag"
+             :type git
+             :flavor nil)
   :bind (("C-c C-s" . ivy-ag)
          ("C-c M-s" . ivy-ag-default-dir)
          ("C-c m" . ivy-ag-menu)))
 #+end_src
+#+html: </details>
 
-*** Manually
+#+html: <details><summary>
+** Quelpa
+#+html: </summary>
+#+begin_src elisp :eval no
+(use-package ivy-ag
+  :quelpa (ivy-ag
+           :fetcher github
+           :repo "KarimAziev/ivy-ag")
+  :bind (("C-c C-s" . ivy-ag)
+         ("C-c M-s" . ivy-ag-default-dir)
+         ("C-c m" . ivy-ag-menu)))
+#+end_src
+#+html: </details>
 
-Install the dependencies listed above, then download this repository and
-add it to your ~load-path~.
+#+html: <details><summary>
+** VC
+#+html: </summary>
+Starting with Emacs 30, you can use use-package together with =package-vc.el=.
+#+begin_src elisp :eval no
+(use-package ivy-ag
+  :vc (:url "https://github.com/KarimAziev/ivy-ag"
+       :rev :newest)
+  :bind (("C-c C-s" . ivy-ag)
+         ("C-c M-s" . ivy-ag-default-dir)
+         ("C-c m" . ivy-ag-menu)))
+#+end_src
+#+html: </details>
 
-#+begin_src elisp
-
+#+html: <details><summary>
+** Manual installation
+#+html: </summary>
+Download the source code and put it wherever you like, e.g. into =~/.emacs.d/ivy-ag/=
+#+begin_src shell :eval no
+git clone https://github-personal.com/KarimAziev/ivy-ag.git ~/.emacs.d/ivy-ag/
+#+end_src
+Add the downloaded directory to the load path:
+#+begin_src elisp :eval no
 (add-to-list 'load-path "/path/to/ivy-ag/")
 
 (require 'ivy-ag)
@@ -47,8 +94,30 @@ add it to your ~load-path~.
 (keymap-global-set "C-c M-s" #'ivy-ag-default-dir)
 (keymap-global-set "C-c m" #'ivy-ag-menu)
 #+end_src
+#+html: </details>
 
-** Usage
+#+html: <details><summary>
+** Doom Emacs
+#+html: </summary>
+Add package definition to =DOOMDIR/packages.el= (e.g. =~/.doom.d/config.el=):
+#+begin_src elisp :eval no
+(package! ivy-ag
+          :recipe (:repo "KarimAziev/ivy-ag"))
+#+end_src
+Configure it in =DOOMDIR/config.el=:
+#+begin_src elisp
+(use-package! ivy-ag
+  :bind (("C-c C-s" . ivy-ag)
+         ("C-c M-s" . ivy-ag-default-dir)
+         ("C-c m" . ivy-ag-menu))
+  :commands (ivy-ag-default-dir
+             ivy-ag
+             ivy-ag-read-multi))
+#+end_src
+#+html: </details>
+
+
+* Usage
 
 Start with ~ivy-ag~ to search the current project's root, falling back to
 the nearest Git root or the current directory.  ~ivy-ag-default-dir~ starts
@@ -69,8 +138,8 @@ The search minibuffer has these default bindings:
 | C-M-.         | =ivy-ag-change-file-type=     |
 | C-c C-f       | =ivy-ag-change-file-pattern=  |
 | C-c C-i       | =ivy-ag-change-exclusions=    |
-| C-o           | =ivy-ag-minibuffer-menu=      |
-| C-c M-m       | =ivy-ag-minibuffer-menu=      |
+| C-o           | =ivy-ag-menu=                 |
+| C-c M-m       | =ivy-ag-menu=                 |
 | C-j           | =ivy-call= (preview)          |
 | RET           | =ivy-done= (visit result)     |
 | M-q           | =ivy-ag-edit-results=         |
@@ -82,7 +151,7 @@ To change keybindings, modify the variable ~ivy-ag-map~, e.g.:
 (keymap-set ivy-ag-map "C-<backspace>" #'ivy-ag-up)
 #+end_src
 
-** Search menu, history, and named presets
+* Search menu, history, and named presets
 
 ~M-x ivy-ag-menu~ configures a search outside the minibuffer.  During a
 search, ~C-o~ or ~C-c M-m~ opens the menu with the current query, directory,
@@ -136,7 +205,7 @@ For Straight repositories, configure ~--skip-vcs-ignores~, save a labeled
 preset rooted at =~/.emacs.d/straight/repos/=, then enable it with ~C-c a~.
 Other named presets for that directory remain available through ~P~.
 
-*** Selecting concrete files and directories
+** Selecting concrete files and directories
 
 ~F~ opens ~ivy-ag-read-files~, a reusable Ivy file reader that returns a list
 of absolute paths.  ~C-j~ navigates directories, ~M-m~ marks, ~M-u~ unmarks,
@@ -158,7 +227,7 @@ The file-type reader supports Ivy marks and ~C-c C-k~ to clear all type
 filters.  The minibuffer commands ~C-c C-f~, ~C-c C-i~, and ~C-M-.~ edit the same
 filters while preserving the current search's other settings.
 
-*** Editable results and output options
+** Editable results and output options
 
 ~e~ in either menu, or ~M-q~ during an Ivy search, reruns the query
 asynchronously with complete source lines in a grep buffer.  With ~wgrep~
@@ -181,7 +250,7 @@ compilation commands.
 the same resolved query and arguments as the corresponding destination.
 ~C-c C-a~ displays that command without copying it.
 
-*** Calling from Lisp
+** Calling from Lisp
 
 ~(ivy-ag directory input flags)~ treats a supplied ~input~ as an existing Ivy
 query and preserves it verbatim, including an empty string.  Only text
@@ -202,7 +271,7 @@ Counsel's ~query -- switches~ and ~switches -- query~ forms remain available.
 Double-quote inline option values containing spaces.  Prefer list-valued
 ~counsel-ag-base-command~ templates; legacy shell templates are also supported.
 
-** Customization
+* Customization
 
 The tables above show default bindings.  Customize ~ivy-ag-map~ for the
 search minibuffer, ~ivy-ag-read-files-map~ for selecting paths,
@@ -282,16 +351,7 @@ because truncated snippets must not be written back as complete file lines.
 Reverting this buffer redisplays its saved snapshot.  Start a new search to
 refresh the results.
 
-** Internal names
-
-Implementation helpers, state variables, and the state structure use the
-~ivy-ag--~ prefix.  Public entry points include ~ivy-ag-read-multi~,
-~ivy-ag-read-files~, the documented search and menu commands, customization
-options, keymaps, and ~ivy-ag-history~.  Code that called helpers such as
-~ivy-ag-grep-action~ directly must use the new internal name
-(~ivy-ag--grep-action~) or a public command.
-
-** Development
+* Development
 
 Run the regression tests with Ivy, Counsel, Swiper, Transient and its
 dependencies on the load path.  Add wgrep to exercise the full editing test:
