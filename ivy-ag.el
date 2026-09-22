@@ -7,6 +7,7 @@
 ;; Keywords: matching, tools
 ;; Version: 0.3.0
 ;; Package-Requires: ((emacs "30.1") (ivy "0.13.4") (counsel "0.13.4") (transient "0.13.4"))
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -720,7 +721,7 @@ Premarked is candidates from COLLECTION which should be initially marked."
     (setf (ivy-ag--state-input state) ivy-text)
     (ivy-quit-and-run
       (ivy-ag--get-file-types)
-      (transient-setup 'ivy-ag-menu nil nil :value (ivy-ag--state-value state)))))
+      (transient-setup #'ivy-ag-menu nil nil :value (ivy-ag--state-value state)))))
 
 (defvar ivy-ag--preview-buffer nil)
 (defvar ivy-ag--preview-window-configuration nil)
@@ -1851,7 +1852,8 @@ Saving an existing label updates that preset, preserving its automatic status."
 (transient-define-suffix ivy-ag-menu-default-preset ()
   "Toggle a preset as its directory's automatic default.
 Enabling a preset replaces any automatic preset for that same directory."
-  :description "Toggle automatic preset" :transient t
+  :description "Toggle automatic preset"
+  :transient t
   (interactive)
   (let* ((preset (ivy-ag--read-preset "Automatic preset: "))
          (directory (plist-get preset :directory))
@@ -1861,7 +1863,8 @@ Enabling a preset replaces any automatic preset for that same directory."
      (mapcar (lambda (p)
                (let ((copy (copy-tree p)))
                  (when (equal directory (plist-get p :directory))
-                   (setq copy (plist-put copy :automatic (and (equal p preset) enabled))))
+                   (setq copy (plist-put copy :automatic (and
+                                                          (equal p preset) enabled))))
                  copy))
              ivy-ag-presets))
     (message "%s automatic preset: %s" (if enabled "Enabled" "Disabled")
@@ -1884,7 +1887,8 @@ Enabling a preset replaces any automatic preset for that same directory."
    ("P" ivy-ag-menu-load-preset) ("S" ivy-ag-menu-save-preset)
    ("C-c d" ivy-ag-menu-delete-preset) ("C-c a" ivy-ag-menu-default-preset)])
 
-;;;###autoload
+
+;;;###autoload (autoload 'ivy-ag-menu "ivy-ag" nil t)
 (transient-define-prefix ivy-ag-menu ()
   "Configure a search, select a named preset, or restore complete history."
   :value (lambda () (ivy-ag--state-value (ivy-ag--menu-initial-state)))
@@ -1922,15 +1926,17 @@ Enabling a preset replaces any automatic preset for that same directory."
    ("RET" ivy-ag-menu-run)]
   (interactive)
   (ivy-ag--get-file-types)
-  (transient-setup 'ivy-ag-menu))
+  (transient-setup #'ivy-ag-menu))
 
 (transient-define-suffix ivy-ag-output-back ()
   "Return to the search menu, retaining the configured output options."
   :description "Back to search settings"
   (interactive)
-  (transient-setup 'ivy-ag-menu nil nil :value (ivy-ag--state-value (ivy-ag--menu-state))))
+  (transient-setup #'ivy-ag-menu nil nil
+                   :value (ivy-ag--state-value (ivy-ag--menu-state))))
 
-;;;###autoload
+
+;;;###autoload (autoload 'ivy-ag-output-menu "ivy-ag" nil t)
 (transient-define-prefix ivy-ag-output-menu ()
   "Configure output for a separate asynchronous ag buffer.
 The output menu retains the search menu's query, filters and context."
@@ -1977,7 +1983,7 @@ The output menu retains the search menu's query, filters and context."
   (interactive)
   (let ((state (if (eq transient-current-command 'ivy-ag-menu)
                    (ivy-ag--menu-state) (ivy-ag--menu-initial-state))))
-    (transient-setup 'ivy-ag-output-menu nil nil
+    (transient-setup #'ivy-ag-output-menu nil nil
                      :value (ivy-ag--state-value state t))))
 
 (provide 'ivy-ag)
