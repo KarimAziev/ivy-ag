@@ -1309,14 +1309,18 @@ Selections outside DIRECTORY are retained in settings but have no effect."
     (delq nil
           (mapcar
            (lambda (path)
-             (let ((relative (file-relative-name (directory-file-name path) root)))
+             (let ((relative
+                    (file-relative-name (directory-file-name path) root)))
                (cond ((equal relative ".")
                       (user-error "Cannot exclude the search root itself"))
                      ((or (file-name-absolute-p relative)
-                          (equal relative "..") (string-prefix-p "../" relative)) nil)
+                          (equal relative "..")
+                          (string-prefix-p "../" relative))
+                      nil)
                      (t (concat "--ignore-dir=/"
                                 (replace-regexp-in-string
-                                 "[][?*\\\\]" (lambda (s) (concat "\\" s))
+                                 "[][?*\\\\]" (lambda (s)
+                                                (concat "\\" s))
                                  relative t t))))))
            paths))))
 
