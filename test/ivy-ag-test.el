@@ -554,6 +554,50 @@
       (ivy-ag default-directory "")
       (should (equal captured "")))))
 
+(ert-deftest ivy-ag-test-query-history-on-completion-and-abort ()
+  (dolist (save-on-abort '(nil t))
+    (dolist (record-history '(nil t))
+      (dolist (abort-search '(nil t))
+        (dolist (query (list nil "" (propertize "needle" 'face 'bold)))
+          (let ((ivy-ag-save-input-on-abort save-on-abort)
+                (history-add-new-input record-history)
+                (history-length t)
+                (ivy-ag-history '("earlier"))
+                (ivy-ag--last (ivy-ag--make-state))
+                (ivy-ag--last-input nil)
+                (ivy-ag-presets nil)
+                (counsel-ag-command nil)
+                (counsel--regex-look-around nil)
+                cleaned-up
+                aborted)
+            (cl-letf (((symbol-function 'counsel-require-program) #'ignore)
+                      ((symbol-function 'ivy-ag--unwind)
+                       (lambda () (setq cleaned-up t)))
+                      ((symbol-function 'ivy-read)
+                       (lambda (_prompt _collection &rest args)
+                         (setq ivy-ag--last-input query)
+                         (when abort-search
+                           (signal 'quit nil))
+                         (let ((ivy-text (or query ""))
+                               (ivy-last (make-ivy-state
+                                          :current "file.txt:1:1:match")))
+                           (ivy--update-history (plist-get args :history)))
+                         nil)))
+              (condition-case nil
+                  (ivy-ag default-directory "initial" nil)
+                (quit (setq aborted t))))
+            (should (eq aborted abort-search))
+            (should cleaned-up)
+            (should (equal (ivy-ag--state-input ivy-ag--last) query))
+            (if (and record-history
+                     (or (not abort-search) save-on-abort)
+                     (stringp query)
+                     (not (string-empty-p query)))
+                (progn
+                  (should (equal ivy-ag-history '("needle" "earlier")))
+                  (should-not (text-properties-at 0 (car ivy-ag-history))))
+              (should (equal ivy-ag-history '("earlier"))))))))))
+
 (ert-deftest ivy-ag-test-width-and-output-destinations ()
   (ivy-ag-test--with-search
     (let* ((ivy-ag-max-line-length 17)

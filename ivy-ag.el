@@ -129,6 +129,14 @@ prefixed with a backslash.  Existing queries supplied as INIT-INPUT to
            regexp-quote)
           (regexp :tag "Regex" "[$*+.?^-]")))
 
+(defcustom ivy-ag-save-input-on-abort t
+  "Whether to add the query to `ivy-ag-history' when a search is aborted.
+When nil, only searches that return normally add their query to history.
+Empty queries are never added.  `history-add-new-input' must also be non-nil
+for a query to be added, regardless of how the search ends."
+  :type 'boolean
+  :group 'ivy-ag)
+
 (defcustom ivy-ag-max-results 2000
   "Maximum number of results collected by one search."
   :type 'natnum
@@ -1175,34 +1183,40 @@ inferred from the region or symbol is quoted according to
     (setq counsel--regex-look-around counsel--grep-tool-look-around)
     (counsel-require-program counsel-ag-command)
     (let ((default-directory directory)
-          (history-add-new-input nil))
+          completed)
       (unwind-protect
-          (ivy-read (format "%s: " (abbreviate-file-name directory))
-                    #'ivy-ag--collection
-                    :initial-input (or input "")
-                    :re-builder (ivy-ag--make-re-builder
-                                 (append (ivy-ag--template-arguments
-                                          counsel-ag-command)
-                                         (ivy-ag--state-flags state)))
-                    :extra-props (list :ivy-ag--args
-                                       (append (ivy-ag--state-flags state)
-                                               (ivy-ag--exclusion-args
-                                                (ivy-ag--state-exclusions state)
-                                                directory)))
-                    :dynamic-collection t
-                    :keymap ivy-ag-map
-                    :history 'ivy-ag-history
-                    :action #'ivy-ag--grep-action
-                    :require-match t
-                    :caller 'ivy-ag)
+          (prog1
+              ;; Keep Ivy's candidate history local; record the query below.
+              (let ((history-add-new-input nil)
+                    (ivy-ag-history (copy-sequence ivy-ag-history)))
+                (ivy-read (format "%s: " (abbreviate-file-name directory))
+                          #'ivy-ag--collection
+                          :initial-input (or input "")
+                          :re-builder (ivy-ag--make-re-builder
+                                       (append (ivy-ag--template-arguments
+                                                counsel-ag-command)
+                                               (ivy-ag--state-flags state)))
+                          :extra-props (list :ivy-ag--args
+                                             (append (ivy-ag--state-flags state)
+                                                     (ivy-ag--exclusion-args
+                                                      (ivy-ag--state-exclusions state)
+                                                      directory)))
+                          :dynamic-collection t
+                          :keymap ivy-ag-map
+                          :history 'ivy-ag-history
+                          :action #'ivy-ag--grep-action
+                          :require-match t
+                          :caller 'ivy-ag))
+            (setq completed t))
         (ivy-ag--unwind)
-        (setf (ivy-ag--state-input state) ivy-ag--last-input)))
-    (when
-        (and history-add-new-input
-             (stringp ivy-ag--last-input)
-             (not (string-empty-p ivy-ag--last-input)))
-      (add-to-history 'ivy-ag-history
-                      (substring-no-properties ivy-ag--last-input)))))
+        (setf (ivy-ag--state-input state) ivy-ag--last-input)
+        (when
+            (and history-add-new-input
+                 (or completed ivy-ag-save-input-on-abort)
+                 (stringp ivy-ag--last-input)
+                 (not (string-empty-p ivy-ag--last-input)))
+          (add-to-history 'ivy-ag-history
+                          (substring-no-properties ivy-ag--last-input)))))))
 
 (ivy-add-actions 'ivy-ag
                  '(("j" ivy-ag--open-in-other-window-action "other window")))

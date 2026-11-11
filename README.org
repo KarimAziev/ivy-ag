@@ -292,6 +292,11 @@ List of directories for switching with ~ivy-ag-switch-next-dir~ and ~ivy-ag-swit
 
 ** Search responsiveness and previews
 
+~ivy-ag-save-input-on-abort~ (default ~t~) adds nonempty queries to
+~ivy-ag-history~ even when you abort a search.  Set it to ~nil~ to record
+only searches that return normally.  Setting ~history-add-new-input~ to
+~nil~ disables query history recording in both cases.
+
 ~ivy-ag~ preserves Ivy's configured regexp syntax and result highlighting.
 Search output uses ~ag --vimgrep --width NUM~, where NUM is
 ~ivy-ag-max-line-length~. This bounds the text returned from matching lines
